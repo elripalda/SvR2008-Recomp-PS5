@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
@@ -18,11 +19,13 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/d3d.h"
+#include "gpu/device.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/output.h"
 #include "gpu/resources.h"
 #include "gpu/vertex_declaration.h"
+#include "svr_frame_diag.h"
 
 // src/native/crash_trace.cpp: hang watchdog, fed once per presented frame.
 void SvrWatchdogHeartbeat();
@@ -33,7 +36,7 @@ bool SvrOnSteamDeck();
 REXCVAR_DEFINE_INT32(svr_render_scale, 0, "SvR",
                      "Internal resolution: 1 = 720p (original), 2 = 1440p, 3 = 4K (2160p), "
                      "4 = 2880p. 0 = auto: from the display (1440p on 1080p/1440p screens, 4K on "
-                     "4K screens), 720p on Steam Deck");
+                     "4K screens), 720p on Steam Deck and on built-in (laptop) graphics");
 
 namespace bd::gpu {
 
@@ -45,8 +48,17 @@ GuestTexture *SvrCreateHostSurface(u32 width, u32 height, u32 format);
 namespace {
 
 std::mutex g_mutex;
-std::unordered_map<u32, GuestTexture *> g_surfaces;  // D3DSurface VA -> host render target
-std::unordered_map<u32, GuestTexture *> g_targets;   // texture VA -> GPU-written host texture
+
+// A host resource made for a guest surface or GPU-written texture, with the guest description it
+// was made from. Road to WrestleMania unloads characters between scenes and reuses those guest
+// objects for other textures (another wrestler's composited skin at another size): a host
+// resource kept by address alone then showed the previous character's skin mixed into the new one.
+struct HostTarget {
+  GuestTexture *host = nullptr;
+  u32 desc[2] = {};  // surface: size bits, format; texture: fetch dwords 1 (format, base), 2 (size)
+};
+std::unordered_map<u32, HostTarget> g_surfaces;  // D3DSurface VA -> host render target
+std::unordered_map<u32, HostTarget> g_targets;   // texture VA -> GPU-written host texture
 
 // The texture's GPUTEXTURE_FETCH_CONSTANT (D3DTexture+0x1C), as host-order dwords.
 bool ReadFetch(u32 texture_va, rex::graphics::xenos::xe_gpu_texture_fetch_t &fetch) {
@@ -58,15 +70,52 @@ bool ReadFetch(u32 texture_va, rex::graphics::xenos::xe_gpu_texture_fetch_t &fet
   return fetch.type == rex::graphics::xenos::FetchConstantType::kTexture;
 }
 
+// Sets aside a host resource whose guest object now describes something else. It is not destroyed:
+// these host-made targets are linked into the renderer's resolve bookkeeping, which the
+// D3DResource_Destroy path doesn't expect for them (freeing one crashed in
+// DrainResolveLinksLocked). Rare in practice (a guest object changing size or format), so the
+// memory is simply kept.
+std::vector<GuestTexture *> g_retired;
+void RetireHost(GuestTexture *host) {
+  if (!host)
+    return;
+  g_retired.push_back(host);
+  BD_INFO("SvR: {} stale host target(s) set aside", g_retired.size());
+}
+
+// Whether g_targets' entry for texture_va still matches the texture there; a stale one is retired
+// and removed. Caller holds g_mutex.
+bool TargetCurrent(u32 texture_va, std::unordered_map<u32, HostTarget>::iterator it) {
+  rex::graphics::xenos::xe_gpu_texture_fetch_t fetch{};
+  if (!ReadFetch(texture_va, fetch) ||
+      (fetch.dword_1 == it->second.desc[0] && fetch.dword_2 == it->second.desc[1]))
+    return true;
+  BD_INFO("SvR target 0x{:08X}: now {}x{} fmt {} (was another texture) -> rebuilt", texture_va,
+          fetch.size_2d.width + 1, fetch.size_2d.height + 1, u32(fetch.format));
+  RetireHost(it->second.host);
+  g_targets.erase(it);
+  return false;
+}
+
 }  // namespace
 
-u32 SvrRenderScale() {
-  static std::atomic<u32> s_scale{0};
-  if (const u32 scale = s_scale.load(std::memory_order_relaxed))
+// Built-in graphics (Intel UHD / Iris Xe, the Radeon in Ryzen laptops) share the CPU's memory,
+// power and heat: rendering above 720p there costs the steady 60.
+bool OnBuiltInGraphics() {
+  auto *device = Video::HostDevice();
+  return device && (device->getDescription().type == plume::RenderDeviceType::INTEGRATED ||
+                    device->getCapabilities().uma);
+}
+
+u32 SvrAutoRenderScale() {
+  static std::atomic<u32> s_auto{0};
+  if (const u32 scale = s_auto.load(std::memory_order_relaxed))
     return scale;
+  if (!Video::HostDevice())
+    return 1;  // not decided before the graphics device exists
   u32 scale = 1;
-  if (const int configured = REXCVAR_GET(svr_render_scale); configured > 0) {
-    scale = u32(std::min(configured, 4));
+  if (OnBuiltInGraphics()) {
+    BD_INFO("SvR native: built-in graphics, auto resolution is 720p");
   } else if (!SvrOnSteamDeck()) {
     // The larger of the window and the display, so a window on a big screen still renders
     // sharp (downscaled at present); 720p multiples rounded to nearest: 1080/1440 -> 2, 2160 -> 3.
@@ -79,6 +128,16 @@ u32 SvrRenderScale() {
     if (h)
       scale = std::clamp(u32((h + 360u) / 720u), 1u, 4u);
   }
+  s_auto.store(scale, std::memory_order_relaxed);
+  return scale;
+}
+
+u32 SvrRenderScale() {
+  static std::atomic<u32> s_scale{0};
+  if (const u32 scale = s_scale.load(std::memory_order_relaxed))
+    return scale;
+  const int configured = REXCVAR_GET(svr_render_scale);
+  const u32 scale = configured > 0 ? u32(std::min(configured, 4)) : SvrAutoRenderScale();
   u32 expected = 0;
   if (s_scale.compare_exchange_strong(expected, scale)) {
     BD_INFO("SvR native: internal resolution {}x{} ({}x)", 1280 * scale, 720 * scale, scale);
@@ -93,21 +152,26 @@ GuestTexture *SvrResolveSurface(u32 surface_va) {
   if (auto *host = HostResourceHeap::FromGuest<GuestTexture>(surface_va))
     return host;
   std::lock_guard lock(g_mutex);
-  if (auto it = g_surfaces.find(surface_va); it != g_surfaces.end())
-    return it->second;
   const auto *surface = bd::mem::at<const D3DSurface>(surface_va);
   if (!surface)
     return nullptr;
   // Size packing as decoded by D3DSurface_GetDesc (see gpu/d3d.h).
   const u32 bits = surface->SizeBits;
+  const u32 format = surface->Format;
+  if (auto it = g_surfaces.find(surface_va); it != g_surfaces.end()) {
+    if (it->second.desc[0] == bits && it->second.desc[1] == format)
+      return it->second.host;
+    RetireHost(it->second.host);
+    g_surfaces.erase(it);
+  }
   const u32 width = (bits >> 18) + 1;
   const u32 height = ((bits >> 3) & 0x7FFF) + 1;
-  const u32 format = surface->Format;
   const u32 scale = SvrRenderScale();
+  SvrDiagTimer create(SvrDiag::kTargetCreate);
   GuestTexture *host = SvrCreateHostSurface(width * scale, height * scale, format);
   BD_INFO("SvR surface 0x{:08X}: {}x{} format 0x{:08X} -> host {}", surface_va, width, height,
           format, host ? "ok" : "FAILED");
-  g_surfaces.emplace(surface_va, host);
+  g_surfaces.emplace(surface_va, HostTarget{host, {bits, format}});
   return host;
 }
 
@@ -117,11 +181,11 @@ GuestTexture *SvrResolveTarget(u32 texture_va) {
   if (auto *host = HostResourceHeap::FromGuest<GuestTexture>(texture_va))
     return host;
   std::lock_guard lock(g_mutex);
-  if (auto it = g_targets.find(texture_va); it != g_targets.end())
-    return it->second;
+  if (auto it = g_targets.find(texture_va); it != g_targets.end() && TargetCurrent(texture_va, it))
+    return it->second.host;
   rex::graphics::xenos::xe_gpu_texture_fetch_t fetch{};
   if (!ReadFetch(texture_va, fetch)) {
-    g_targets.emplace(texture_va, nullptr);
+    g_targets.emplace(texture_va, HostTarget{});
     return nullptr;
   }
   const u32 width = fetch.size_2d.width + 1;
@@ -130,11 +194,12 @@ GuestTexture *SvrResolveTarget(u32 texture_va) {
   // ConvertGuestFormat maps a raw GPUTEXTUREFORMAT byte by its low 6 bits; the tag keeps a small
   // byte from matching one of re:Blue's D3DFormat values (k_8_8_8_8 = 6 = its kIndex32).
   const u32 scale = SvrRenderScale();
+  SvrDiagTimer create(SvrDiag::kTargetCreate);
   GuestTexture *host = SvrCreateHostTexture(width * scale, height * scale, 1, levels, 0,
                                             0xC0000000u | u32(fetch.format), 0);
   BD_INFO("SvR target 0x{:08X}: {}x{} fmt {} levels {} -> host {}", texture_va, width, height,
           u32(fetch.format), levels, host ? "ok" : "FAILED");
-  g_targets.emplace(texture_va, host);
+  g_targets.emplace(texture_va, HostTarget{host, {fetch.dword_1, fetch.dword_2}});
   return host;
 }
 
@@ -210,11 +275,27 @@ namespace {
 struct MirrorCheck {
   u32 fetch[6] = {};
   u64 hash = 0;
+  u64 sample = 0;
   u64 frame = 0;
+  u32 stable = 0;  // full checks in a row that found the content unchanged
   GuestTexture *host = nullptr;
 };
 std::unordered_map<u32, MirrorCheck> g_mirror_checks;  // D3D texture VA -> last check
 std::atomic<u64> g_frame{1};
+
+// Hashing every bound texture in full each frame was ~20 MB a frame in a full arena, several ms
+// on CPUs with smaller caches. A texture is hashed in full once every kFullCheckFrames frames
+// (staggered by address) and spot-checked in between. The game rewrites a texture wholesale
+// (Bink frames, menus reloading into reused memory), which the spot check catches at once; a
+// partial rewrite it misses shows at the next full check, at most kFullCheckFrames later.
+// A texture that changed is hashed in full every frame until two full checks in a row find it
+// unchanged: the game may still have been writing it when it was copied (a Bink frame half
+// decoded on another thread), and the rest of that write can land where no sample looks. Spot
+// checks missed exactly that on slower CPUs (green video, stale crowd).
+constexpr u64 kFullCheckFrames = 8;
+constexpr u32 kStableBeforeSpotChecks = 2;
+constexpr size_t kAlwaysFullBytes = 16 * 1024;
+constexpr size_t kSamples = 16, kSampleBytes = 64;
 
 u64 HashSource(const NativeMirrorSource &src) {
   u64 hash = XXH3_64bits(src.fetch, sizeof(src.fetch));
@@ -225,9 +306,29 @@ u64 HashSource(const NativeMirrorSource &src) {
   return hash;
 }
 
+u64 SampleRange(const u8 *data, size_t size, u64 seed) {
+  if (size <= kSamples * kSampleBytes)
+    return XXH3_64bits_withSeed(data, size, seed);
+  u8 buf[kSamples * kSampleBytes];
+  const size_t step = (size - kSampleBytes) / (kSamples - 1);
+  for (size_t i = 0; i < kSamples; ++i)
+    std::memcpy(buf + i * kSampleBytes, data + i * step, kSampleBytes);
+  return XXH3_64bits_withSeed(buf, sizeof(buf), seed);
+}
+
+u64 SampleSource(const NativeMirrorSource &src) {
+  u64 hash = XXH3_64bits(src.fetch, sizeof(src.fetch));
+  if (src.base_size)
+    hash = SampleRange(src.base, src.base_size, hash);
+  if (src.mips_size)
+    hash = SampleRange(src.mips, src.mips_size, hash);
+  return hash;
+}
+
 }  // namespace
 
 void SvrOnFrame() {
+  SvrDiagEndFrame();
   SvrWatchdogHeartbeat();
   const u64 frame = g_frame.fetch_add(1, std::memory_order_relaxed);
   // Present rate in the log every 600 frames (pacing check).
@@ -249,10 +350,12 @@ u64 SvrFrameIndex() { return g_frame.load(std::memory_order_relaxed); }
 GuestTexture *SvrResolveTexture(u32 texture_va) {
   if (!texture_va)
     return nullptr;
+  SvrDiagTimer diag(SvrDiag::kTextureCheck);
   const u64 frame = g_frame.load(std::memory_order_relaxed);
   std::lock_guard lock(g_mutex);
-  if (auto it = g_targets.find(texture_va); it != g_targets.end() && it->second)
-    return it->second;
+  if (auto it = g_targets.find(texture_va);
+      it != g_targets.end() && it->second.host && TargetCurrent(texture_va, it))
+    return it->second.host;
   MirrorCheck &check = g_mirror_checks[texture_va];
   if (check.frame == frame)
     return check.host;
@@ -261,12 +364,27 @@ GuestTexture *SvrResolveTexture(u32 texture_va) {
     check.frame = frame;
     return check.host = nullptr;
   }
-  const u64 hash = HashSource(src);
-  if (check.frame != 0 && check.hash == hash) {
+  const size_t bytes = src.base_size + src.mips_size;
+  const u64 sample = SampleSource(src);
+  const bool full_due = bytes <= kAlwaysFullBytes || check.stable < kStableBeforeSpotChecks ||
+                        (frame + (texture_va >> 4)) % kFullCheckFrames == 0;
+  if (check.frame != 0 && !full_due && sample == check.sample) {
     check.frame = frame;
     return check.host;
   }
-  check.host = GetOrCreateNativeMirror(texture_va, 0);
+  const u64 hash = HashSource(src);
+  SvrDiagAdd(SvrDiag::kHashBytes, bytes);
+  check.sample = sample;
+  if (check.frame != 0 && check.hash == hash) {
+    check.frame = frame;
+    ++check.stable;
+    return check.host;
+  }
+  check.stable = 0;
+  {
+    SvrDiagTimer mirror(SvrDiag::kTextureMirror);
+    check.host = GetOrCreateNativeMirror(texture_va, 0);
+  }
   check.hash = hash;
   check.frame = frame;
   return check.host;

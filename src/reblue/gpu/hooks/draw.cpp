@@ -8,6 +8,9 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#if defined(SVR_NATIVE_RENDERER)
+#include "svr_frame_diag.h"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -17,6 +20,7 @@
 #include <mutex>
 #include <optional>
 
+#include <rex/cvar.h>
 #include <rex/graphics/xenos.h>
 #include <rex/hook.h>
 #include <rex/runtime.h>
@@ -32,6 +36,12 @@
 #if defined(SVR_NATIVE_RENDERER)
 #include "svr_draw_log.h"
 #include "svr_geometry.h"
+
+#if defined(SVR_NATIVE_RENDERER)
+REXCVAR_DEFINE_BOOL(svr_edge_blur, false, "SvR",
+                    "SvR 2008's own edge-blur filter (the console's anti-aliasing): off keeps the image "
+                    "sharp; the higher internal resolution already smooths edges");
+#endif
 #include "svr_hook.h"
 #include "svr_resources.h"
 #endif
@@ -106,6 +116,9 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // One lock across the whole recording sequence: loader threads record texture
   // uploads and Present records under the same mutex, and the per-frame command
   // list they all write is single-producer.
+#if defined(SVR_NATIVE_RENDERER)
+  bd::gpu::SvrDiagTimer diag_draw(bd::gpu::SvrDiag::kDraw);
+#endif
   auto &s = bd::gpu::state();
   std::unique_lock<std::mutex> lock(s.mutex);
   bd::gpu::Video::OpenCommandListLocked();
@@ -148,6 +161,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         return;
     }
   }
+  // SvR 2008's edge-blur post pass (pixel shader 0xF6E6390C10B93944; the same filter as SvR 2010's): a 3x3
+  // Sobel edge test that replaces every edge pixel with the average of its 9 neighbours. On the
+  // console that softened jaggies at 720p; here its 1-pixel 720p offsets are 2+ pixels at the
+  // internal resolution, so it blurs hair, tattoos, ropes and the crowd while the supersampling
+  // already smooths edges. Skipping the draw leaves the scene as rendered.
+  if (!REXCVAR_GET(svr_edge_blur) && s.pixel_shader && s.pixel_shader->shaderCacheEntry &&
+      s.pixel_shader->shaderCacheEntry->hash == 0xF6E6390C10B93944ull)
+    return;
   // Vulkan has no "no index buffer" state: an indexed draw with none bound, or reaching past the
   // end of the bound one, can hang the GPU. Such a draw is skipped (and counted in the log).
   if (args.indexed && primitive_type != 13) {

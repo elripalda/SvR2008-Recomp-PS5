@@ -4,8 +4,8 @@
 // is what the GPU fetches:
 //   stream N: vertex fetch constant 95 - N (device + 0x778 - 8 * N: GPU address of the stream's
 //     vertex 0, SetStreamSource offset included, | 3; size | endian), the D3DVertexBuffer at
-//     device + 0x30A4 + 4 * N and the stride / 4 at device + 0x30E8 + N;
-//   indices: the D3DIndexBuffer at device + 0x308C (SetIndices only stores the pointer).
+//     device + 0x30AC + 4 * N and the stride / 4 at device + 0x30F0 + N;
+//   indices: the D3DIndexBuffer at device + 0x3094 (SetIndices only stores the pointer).
 // Each guest range gets a host copy holding the bytes the GPU sees. The CPU rewrites buffers
 // whenever it likes (Lock/Unlock between draws, new data loaded into reused memory), so a copy is
 // compared with guest memory (content hash) the first time it's used in a frame and after every
@@ -62,6 +62,8 @@ struct Mirror {
   bool has_content = false;
   u32 changes = 0;        // consecutive checks that found new content
   u64 hash = 0;
+  u64 sample = 0;         // SampleHash of the content `hash` was taken from
+  u32 stable = 0;         // full checks in a row that found the content unchanged
   u64 checked_frame = 0;  // frame the copy was last compared in; 0 = compare at the next use
   u64 used_frame = 0;
   std::unique_ptr<plume::RenderBuffer> buffer;  // static content
@@ -115,6 +117,28 @@ void CopyAsGpuReads(void *dst, const u8 *src, u32 size, u32 endian) {
   }
 }
 
+// A full-arena frame uses tens of MB of vertex data; hashing all of it every frame cost several ms
+// on CPUs with smaller caches. Rewrites through Lock/Unlock are flagged by the Unlock hooks (a full
+// check at the next use), so a buffer nobody unlocked gets a spot check in between full checks
+// every kFullCheckFrames frames (staggered by address). The spot check catches content loaded
+// wholesale into reused memory at once. A buffer that changed is checked in full every frame until
+// two full checks in a row find it unchanged: another thread may still have been writing it when
+// it was copied (crowd members went missing on slower CPUs when the spot check skipped the rest).
+constexpr u64 kFullCheckFrames = 8;
+constexpr u32 kStableBeforeSpotChecks = 2;
+constexpr u32 kAlwaysFullBytes = 16 * 1024;
+constexpr u32 kSamples = 16, kSampleBytes = 64;
+
+u64 SampleHash(const u8 *src, u32 size) {
+  if (size <= kSamples * kSampleBytes)
+    return XXH3_64bits(src, size);
+  u8 buf[kSamples * kSampleBytes];
+  const u32 step = (size - kSampleBytes) / (kSamples - 1);
+  for (u32 i = 0; i < kSamples; ++i)
+    std::memcpy(buf + i * kSampleBytes, src + size_t(i) * step, kSampleBytes);
+  return XXH3_64bits(buf, sizeof(buf));
+}
+
 // Draws already recorded keep a retired copy until its frame slot's fence.
 void Retire(Mirror &m) {
   if (m.buffer)
@@ -163,7 +187,24 @@ bool ResolveLocked(u32 address, u32 size, u32 endian, bool index, u64 frame,
       return true;
     }
   }
+  // Not unlocked since its last check (checked_frame != 0), not due a full check: spot check.
+  const u64 sample = SampleHash(src, size);
+  if (same_kind && m.checked_frame != 0 && size > kAlwaysFullBytes && !CompareEveryDraw() &&
+      m.stable >= kStableBeforeSpotChecks && (frame + (address >> 8)) % kFullCheckFrames != 0 &&
+      sample == m.sample) {
+    m.checked_frame = frame;
+    if (m.buffer) {
+      out = m.buffer.get();
+      return true;
+    }
+    if (ring_current) {
+      out = m.ring;
+      return true;
+    }
+  }
   const u64 hash = XXH3_64bits(src, size);
+  m.sample = sample;
+  m.stable = (same_kind && hash == m.hash) ? m.stable + 1 : 0;
   if (same_kind && hash == m.hash) {
     m.checked_frame = frame;
     if (m.buffer) {
@@ -236,7 +277,7 @@ struct StreamBinding {
   u32 stride = 0;
 };
 
-// SetStreamSource (sub_8223FEA8) keeps stream N in vertex fetch constant 95 - N: the last two
+// SetStreamSource (sub_8225A648) keeps stream N in vertex fetch constant 95 - N: the last two
 // dwords of fetch slot 31 for stream 0, i.e. device + 0x778 - 8 * N.
 void StreamFetch(const D3DDevice &device, u32 stream, u32 &dword0, u32 &dword1) {
   const u32 constant = 95u - stream;
@@ -282,8 +323,8 @@ struct IndexBinding {
   plume::RenderFormat format = plume::RenderFormat::R16_UINT;
 };
 
-// SetIndices (sub_82240050) only stores the D3DIndexBuffer at device + 0x308C; DrawIndexedVertices
-// (sub_825AB7D0) reads Common (bit 31 = INDEX32, bits 30-29 = endian), Address (+0x18, through
+// SetIndices (sub_8225A768) only stores the D3DIndexBuffer at device + 0x3094; DrawIndexedVertices
+// (sub_825A4340) reads Common (bit 31 = INDEX32, bits 30-29 = endian), Address (+0x18, through
 // GPU_CONVERT_CPU_TO_GPU_ADDRESS) and Size (+0x1C, exact bytes) at draw time.
 bool ResolveIndicesLocked(const D3DDevice &device, u64 frame, IndexBinding &out) {
   const auto *ib = bd::mem::at<const D3DIndexBuffer>(u32(device.indexBuffer));
@@ -300,7 +341,7 @@ bool ResolveIndicesLocked(const D3DDevice &device, u64 frame, IndexBinding &out)
   return true;
 }
 
-// D3DVertexBuffer_Unlock (sub_82235760) / D3DIndexBuffer_Unlock (sub_82235868), after the game's
+// D3DVertexBuffer_Unlock (sub_82252818) / D3DIndexBuffer_Unlock (sub_82253178), after the game's
 // own: the CPU has finished writing the buffer. SvR re-fills dynamic buffers this way between draws
 // (sub_825F9A28: a 120-byte quad; sub_8257E530: positions every frame).
 void VertexBufferUnlocked(u32 vb_va) {

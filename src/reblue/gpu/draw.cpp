@@ -8,11 +8,15 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#if defined(SVR_NATIVE_RENDERER)
+#include "svr_frame_diag.h"
+#endif
 #include "gpu/frame.h"
 #if defined(SVR_NATIVE_RENDERER)
 #include "svr_resources.h"
 #endif
 
+#include <chrono>
 #include <cstddef>
 #include <algorithm>
 #include <atomic>
@@ -86,9 +90,9 @@ static_assert(offsetof(BdRenderStateCache, colorWriteEnable) == 212);
 // ALPHA_DESTBLEND[28:24], raw D3DBLEND/D3DBLENDOP. RB_COLORCONTROL bit 31 is
 // the alpha master enable.
 #if defined(SVR_NATIVE_RENDERER)
-// SvR 2008: render state comes from the Xenos register values SvR's D3D library keeps in the
-// device, one dword per register, in the blocks its draw functions flush (sub_825AB3E8 ->
-// sub_8223BDD8 / sub_8223D740): 0x2000.. at +0x2880 (16 regs), 0x2080.. at +0x28C0 (3: window
+// SvR (2008 and 2009 share this layout): render state comes from the Xenos register values SvR's
+// D3D library keeps in the device, one dword per register, in the blocks its draw functions flush
+// (2008: sub_825AB3E8 -> sub_8223BDD8 / sub_8223D740): 0x2000.. at +0x2880 (16 regs), 0x2080.. at +0x28C0 (3: window
 // offset, window scissor TL/BR), 0x2100.. at +0x28CC (21), 0x2180.. at +0x2920 (5), 0x2200.. at
 // +0x2934 (12), 0x2280.. at +0x2964 (21), 0x2300.. at +0x29B8 (38), 0x2380.. at +0x2A50 (8). The
 // SetRenderState_* setters write them immediately, so they are current when the SVR_HOOK_BEFORE
@@ -194,18 +198,26 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
   const u32 alpha_ref_bits = SvrRegister(device_guest, 0x210E);
   float alpha_ref;
   std::memcpy(&alpha_ref, &alpha_ref_bits, sizeof(alpha_ref));
+  //
+  // The comparison is made at 8-bit precision, as D3D9's integer ALPHAREF (0..255) intends: alpha
+  // counts as round(a * 255), so the threshold sits half a step below that step. An exact float
+  // compare fails on interpolation rounding: SvR 2010's Road to WrestleMania locker-room door and
+  // magazine test alpha >= 1.0 (ALPHAREF 255) with a constant vertex alpha of 1.0, and NVIDIA
+  // interpolates that constant to 0.99999994 at about half the pixels, which were discarded (the
+  // corridor behind showed through, speckled). AMD interpolates it to exactly 1.0.
   bool alpha_test = (color_control & 0x8u) != 0;
+  const float ref8 = std::round(std::clamp(alpha_ref, 0.0f, 1.0f) * 255.0f);
   float alpha_threshold = alpha_ref;
   if (alpha_test) {
     switch (color_control & 0x7u) {
     case 7: // ALWAYS
       alpha_test = false;
       break;
-    case 6: // GREATEREQUAL: clip(a - ref) as is
+    case 6: // GREATEREQUAL: round(a * 255) >= ref8
+      alpha_threshold = (ref8 - 0.5f) / 255.0f;
       break;
-    case 4: // GREATER; at least the smallest normal float, so ref 0 survives flush-to-zero
-      alpha_threshold = std::max(std::nextafter(alpha_ref, std::numeric_limits<float>::infinity()),
-                                 std::numeric_limits<float>::min());
+    case 4: // GREATER: round(a * 255) > ref8
+      alpha_threshold = (ref8 + 0.5f) / 255.0f;
       break;
     case 0: // NEVER
       alpha_threshold = std::numeric_limits<float>::infinity();
@@ -225,7 +237,7 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
   Video::SetAlphaThreshold(alpha_threshold);
 }
 
-// The window scissor SvR's D3D sends with each draw: SetScissorRect (sub_8223FD58) folds the
+// The window scissor SvR's D3D sends with each draw: SetScissorRect (sub_8225A500) folds the
 // viewport and, when D3DRS_SCISSORTESTENABLE is set, the scissor rect into PA_SC_WINDOW_SCISSOR
 // TL/BR (registers 0x2081/0x2082): x in [14:0], y in [30:16], BR exclusive. Applied after the
 // viewport flush (which resets the host scissor to the viewport).
@@ -404,7 +416,17 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     PipelineState lookup = s.pipelineState;
     SanitizePipelineState(lookup);
     bool built = false;
+#if defined(SVR_NATIVE_RENDERER)
+    const auto pso_start = std::chrono::steady_clock::now();
+#endif
     auto *pso = GetOrCreatePipeline(lookup, &built);
+#if defined(SVR_NATIVE_RENDERER)
+    if (built)
+      SvrDiagAdd(SvrDiag::kPipelineCompile,
+                 u64(std::chrono::duration_cast<std::chrono::microseconds>(
+                         std::chrono::steady_clock::now() - pso_start)
+                         .count()));
+#endif
     if (!pso) {
       u32 n;
       if (DiagShouldLog(4, s.render_target, &n)) {
