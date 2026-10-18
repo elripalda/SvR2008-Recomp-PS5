@@ -35,9 +35,11 @@ REXCVAR_DECLARE(int32_t, bd_anisotropy);
 REXCVAR_DECLARE(int32_t, svr_bloom);
 REXCVAR_DECLARE(bool, svr_display_ramp);
 REXCVAR_DECLARE(bool, svr_edge_blur);
+REXCVAR_DECLARE(bool, svr_ps_buttons);
 
 namespace bd::gpu {
-void SvrDrawLogNextFrame();  // src/native/svr_draw_log.h
+void SvrDrawLogNextFrame();                               // src/native/svr_draw_log.h
+bool SvrPadArtLoad(const std::filesystem::path& file);  // src/native/svr_pad_art.h
 }
 
 namespace {
@@ -235,10 +237,11 @@ std::optional<rex::PathConfig> Svr2008App::OnFinalizePaths(const rex::PathConfig
     // The hub's changes (svr2008.toml) apply to this start.
     rex::cvar::LoadConfig(g_config_path);
     REXLOG_INFO("PS5 hub: settings: resolution {}x, {} fps, anisotropic {}x, fps counter {}, bloom {}%, console "
-                "gamma {}, edge blur {}",
+                "gamma {}, edge blur {}, buttons {}",
                 REXCVAR_GET(svr_render_scale), REXCVAR_GET(svr_60fps) ? 60 : 30, REXCVAR_GET(bd_anisotropy),
                 REXCVAR_GET(svr_fps_counter) ? "on" : "off", REXCVAR_GET(svr_bloom),
-                REXCVAR_GET(svr_display_ramp) ? "on" : "off", REXCVAR_GET(svr_edge_blur) ? "on" : "off");
+                REXCVAR_GET(svr_display_ramp) ? "on" : "off", REXCVAR_GET(svr_edge_blur) ? "on" : "off",
+                REXCVAR_GET(svr_ps_buttons) ? "PlayStation" : "Xbox 360");
     rex::PathConfig start = defaults;
     start.game_data_root = FindGame(app);
     REXLOG_INFO("PS5 hub: START GAME (game {})", start.game_data_root.string());
@@ -265,6 +268,8 @@ void Svr2008App::OnPreLaunchModule() {
     app_context().QuitFromUIThread();
     return;
   }
+  // PlayStation button pictures (ps_buttons.bin beside the app)
+  bd::gpu::SvrPadArtLoad(rex::filesystem::GetExecutableFolder() / "ps_buttons.bin");
   if (drawer_) {
     if (REXCVAR_GET(svr_fps_counter)) fps_counter_ = std::make_unique<FpsCounterDialog>(drawer_);
     pad_watch_ = std::make_unique<PadWatchDialog>(drawer_, runtime());

@@ -137,6 +137,10 @@ static const std::vector<Hub::Setting>& Settings() {
       {"DISPLAY", "svr_fps_counter", "FPS Counter", nullptr,
        "Shows the game's frame rate in the top-left corner while you play.", false, {"false", "true"},
        {"Off", "On"}, "true"},
+      {"GAME", "svr_ps_buttons", "Button Prompts", nullptr,
+       "The button pictures in the menus, matches and loading screens. PlayStation shows the DualSense's "
+       "buttons and controller; Xbox 360 keeps the game's own.",
+       false, {"true", "false"}, {"PlayStation", "Xbox 360 (Original)"}, "true"},
       {"AUDIO", "hub_music_volume", "Menu Music", nullptr,
        "How loud the music is here in the hub. It changes right away.", false,
        {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"},

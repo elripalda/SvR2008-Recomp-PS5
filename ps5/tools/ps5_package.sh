@@ -100,11 +100,10 @@ fi
 # Where the game's files go (the app store's setup, or your disc image's files over FTP)
 mkdir -p "$app/Assets"
 printf 'Put the files from your WWE SmackDown vs. Raw 2008 disc image here (default.xex, pac, sound...),\nor put the .iso itself in the app folder.\n' > "$app/Assets/PUT YOUR GAME FILES HERE.txt"
-# PlayStation button pictures (art/local/pad_icons, made from your game files:
-# never in the repo) -> <app>/pad_icons
-if [[ -d $port/art/local/pad_icons ]]; then
-    mkdir -p "$app/pad_icons"
-    cp "$port"/art/local/pad_icons/*.dds "$app/pad_icons/"
+# PlayStation button pictures (tools/ps_buttons/build.py writes art/local/ps_buttons/ps_buttons.bin:
+# the drawn buttons, your DualSense picture and where they go) -> <app>/ps_buttons.bin
+if [[ -f $port/art/local/ps_buttons/ps_buttons.bin ]]; then
+    cp "$port/art/local/ps_buttons/ps_buttons.bin" "$app/ps_buttons.bin"
 fi
 # The hub's art and menu music (art/local/hub: logo.png, hero.jpg, buttons/,
 # music/ - your own, never in the repo) -> <app>/hub

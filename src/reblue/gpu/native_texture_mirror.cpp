@@ -32,6 +32,7 @@
 #include "gpu/texture_upload.h"
 #if defined(SVR_NATIVE_RENDERER)
 #include "svr_geometry.h"
+#include "svr_pad_art.h"
 #endif
 
 namespace bd::gpu {
@@ -471,6 +472,12 @@ GuestTexture *Build2DMirror(const MirrorLayout &L, const u8 *src,
   std::vector<u8> staging(FaceStagingSize(L), 0u);
   UntileFace(L, src, staging.data(), L.pack_off_x, L.pack_off_y);
 #if defined(SVR_NATIVE_RENDERER)
+  // A texture with Xbox buttons on it: the PlayStation version instead (svr_pad_art.h).
+  if (dxt) {
+    if (GuestTexture *ps = SvrPadArtReplace(L.width, L.height, u32(L.format), staging.data(),
+                                            L.staging_row_bytes))
+      return ps;
+  }
   if (IsPacked16(L.format)) {
     GuestTexture *tex = BuildPacked16Mirror(L, staging);
     if (!tex)
