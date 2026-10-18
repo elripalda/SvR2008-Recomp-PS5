@@ -36,6 +36,7 @@ REXCVAR_DECLARE(int32_t, svr_bloom);
 REXCVAR_DECLARE(bool, svr_display_ramp);
 REXCVAR_DECLARE(bool, svr_edge_blur);
 REXCVAR_DECLARE(bool, svr_ps_buttons);
+REXCVAR_DECLARE(bool, svr_unlock_all);
 
 namespace bd::gpu {
 void SvrDrawLogNextFrame();                               // src/native/svr_draw_log.h
@@ -237,11 +238,12 @@ std::optional<rex::PathConfig> Svr2008App::OnFinalizePaths(const rex::PathConfig
     // The hub's changes (svr2008.toml) apply to this start.
     rex::cvar::LoadConfig(g_config_path);
     REXLOG_INFO("PS5 hub: settings: resolution {}x, {} fps, anisotropic {}x, fps counter {}, bloom {}%, console "
-                "gamma {}, edge blur {}, buttons {}",
+                "gamma {}, edge blur {}, buttons {}, unlock everything {}",
                 REXCVAR_GET(svr_render_scale), REXCVAR_GET(svr_60fps) ? 60 : 30, REXCVAR_GET(bd_anisotropy),
                 REXCVAR_GET(svr_fps_counter) ? "on" : "off", REXCVAR_GET(svr_bloom),
                 REXCVAR_GET(svr_display_ramp) ? "on" : "off", REXCVAR_GET(svr_edge_blur) ? "on" : "off",
-                REXCVAR_GET(svr_ps_buttons) ? "PlayStation" : "Xbox 360");
+                REXCVAR_GET(svr_ps_buttons) ? "PlayStation" : "Xbox 360",
+                REXCVAR_GET(svr_unlock_all) ? "on" : "off");
     rex::PathConfig start = defaults;
     start.game_data_root = FindGame(app);
     REXLOG_INFO("PS5 hub: START GAME (game {})", start.game_data_root.string());

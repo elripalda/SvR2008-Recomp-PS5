@@ -375,7 +375,10 @@ u64 SvrScreenLayerPin(u32 device_guest) {
   if (!vs || !vs->shaderCacheEntry || vs->shaderCacheEntry->hash != kSvrScreenLayerVSHash)
     return 0;
   const i32 bloom = SvrBloomPercent();
-  if (bloom >= 100 || g_svr_composite_frame == bd::gpu::SvrFrameIndex())
+  // Only in a 3D scene, before its composite: the composite ran last frame and not yet this one.
+  // Menus have no composite, and their light panels (dialog boxes) use this shader too.
+  const u64 frame = bd::gpu::SvrFrameIndex();
+  if (bloom >= 100 || g_svr_composite_frame == frame || g_svr_composite_frame + 1 != frame)
     return 0;
   const auto &ps = st.pipelineState;
   if (!ps.alphaBlendEnable || ps.srcBlend != plume::RenderBlend::SRC_ALPHA)

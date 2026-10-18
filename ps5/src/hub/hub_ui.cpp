@@ -141,6 +141,10 @@ static const std::vector<Hub::Setting>& Settings() {
        "The button pictures in the menus, matches and loading screens. PlayStation shows the DualSense's "
        "buttons and controller; Xbox 360 keeps the game's own.",
        false, {"true", "false"}, {"PlayStation", "Xbox 360 (Original)"}, "true"},
+      {"GAME", "svr_unlock_all", "Unlock Everything", nullptr,
+       "Every superstar, arena and WWE Shop item is open from the start, legends included. Your save isn't "
+       "changed: turn it off and you're back to what you've unlocked yourself.",
+       false, {"false", "true"}, {"Off", "On"}, "false"},
       {"AUDIO", "hub_music_volume", "Menu Music", nullptr,
        "How loud the music is here in the hub. It changes right away.", false,
        {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"},
