@@ -35,7 +35,7 @@ add_executable(svr2008
     ${SVR_ROOT}/src/input_script.cpp)
 # The hub: the screen the app opens on (THE HUB's Hub Kit, from the DBZ Budokai 3 port); its fonts
 # are built into the app (fonts/, SIL Open Font License).
-set(SVR2008_PS5_VERSION "0.0.8 Test")
+set(SVR2008_PS5_VERSION "0.0.9 Test")
 target_sources(svr2008 PRIVATE src/hub/hub_ui.cpp src/hub/ps5_hub.cpp src/hub/hub_sfx.cpp src/hub/hub_install.cpp
                                src/ps5/sound.cpp)
 set_source_files_properties(src/hub/ps5_hub.cpp PROPERTIES
