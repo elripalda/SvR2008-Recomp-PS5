@@ -143,6 +143,11 @@ void SvrDrawLogDraw(u32 device_guest, const char *name, u32 primitive, bool inde
   default:
     break;
   }
+  // The full-screen colour layer (its colour is the vertex shader's c1).
+  if (ShaderHash(s.vertex_shader) == 0x688F6131D58520D1ull)
+    BD_INFO("[drawlog]   layer colour {:.4g},{:.4g},{:.4g} alpha {:.4g}", float(dev->vsFloatConstants[1][0]),
+            float(dev->vsFloatConstants[1][1]), float(dev->vsFloatConstants[1][2]),
+            float(dev->vsFloatConstants[1][3]));
   BD_INFO("[drawlog] #{} {} prim {} {} count {} start {} base {} | rt 0x{:08X}[{}] ds 0x{:08X}[{}] "
           "| vp {:.0f},{:.0f} {:.0f}x{:.0f} z {:.2f}-{:.2f} sc {},{}-{},{} | vs {:016X} ps {:016X} "
           "|{}",

@@ -30,6 +30,7 @@
 #include "gpu/shaders/shader_cache.h"
 
 #if defined(SVR_NATIVE_RENDERER)
+#include "svr_resources.h"
 REXCVAR_DECLARE(bool, svr_edge_blur);  // gpu/hooks/draw.cpp
 REXCVAR_DEFINE_INT32(svr_bloom, 0, "SvR",
                      "Bloom and light streaks, in percent of the game's own (100 = the Xbox 360's, "
@@ -354,6 +355,46 @@ bool IsSvrComposite() {
 i32 SvrBloomPercent() { return std::clamp(REXCVAR_GET(svr_bloom), 0, 200); }
 #endif
 
+#if defined(SVR_NATIVE_RENDERER)
+// The frame the composite was last drawn in (layers drawn after it are screen effects, not the
+// scene's).
+u64 g_svr_composite_frame = 0;
+
+// SvR 2008's full-screen colour layer: vertex shader 0x688F6131D58520D1 draws a quad over the
+// screen in the colour of its c1 (pixel shader 0xF3372D3264E5AF77 passes it through). In the
+// entrances' stage shots the game adds one (SRC_ALPHA, ONE) and lays light, see-through ones over
+// the scene (SRC_ALPHA, INV_SRC_ALPHA) before the post-processing: the over-bright, washed-out
+// arena. The camera shots the wrestler walks in on have none. With svr_bloom under 100 those
+// layers' alpha (c1.w) is scaled down (0: gone). Dark layers (fades to black) and the layers over
+// the finished picture (after the composite: flashes, fades) are left as the game draws them.
+constexpr u64 kSvrScreenLayerVSHash = 0x688F6131D58520D1ull;
+constexpr u32 kSvrScreenLayerColourByteOffset = 1 * 16;
+u64 SvrScreenLayerPin(u32 device_guest) {
+  auto &st = bd::gpu::state();
+  auto *vs = st.pipelineState.vertexShader;
+  if (!vs || !vs->shaderCacheEntry || vs->shaderCacheEntry->hash != kSvrScreenLayerVSHash)
+    return 0;
+  const i32 bloom = SvrBloomPercent();
+  if (bloom >= 100 || g_svr_composite_frame == bd::gpu::SvrFrameIndex())
+    return 0;
+  const auto &ps = st.pipelineState;
+  if (!ps.alphaBlendEnable || ps.srcBlend != plume::RenderBlend::SRC_ALPHA)
+    return 0;
+  const bool added = ps.destBlend == plume::RenderBlend::ONE;
+  bool light = false;
+  if (!added && ps.destBlend == plume::RenderBlend::INV_SRC_ALPHA) {
+    if (const auto *dev = bd::mem::at<const D3DDevice>(device_guest)) {
+      const float r = dev->vsFloatConstants[1][0], g = dev->vsFloatConstants[1][1],
+                  b = dev->vsFloatConstants[1][2];
+      light = 0.299f * r + 0.587f * g + 0.114f * b > 0.35f;
+    }
+  }
+  if (!added && !light)
+    return 0;
+  return kSvrScreenLayerVSHash ^ (u64(added) << 8) ^ u64(bloom);
+}
+#endif
+
 // The pixel shader whose registers UploadPixelShaderConstants pins (with what it pins them to),
 // or 0.
 u64 PixelShaderPin() {
@@ -361,6 +402,7 @@ u64 PixelShaderPin() {
     return kBDBlurPSHash;
 #if defined(SVR_NATIVE_RENDERER)
   if (IsSvrComposite()) {
+    g_svr_composite_frame = bd::gpu::SvrFrameIndex();
     const bool edge = REXCVAR_GET(svr_edge_blur);
     const i32 bloom = SvrBloomPercent();
     if (!edge || bloom != 100)
@@ -377,7 +419,12 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest) {
   if (!device_guest)
     return {};
   const u32 va = device_guest + offsetof(D3DDevice, vsFloatConstants);
-  if (SameAsLastUpload(s.vsConstants, va, 0))
+#if defined(SVR_NATIVE_RENDERER)
+  const u64 pin = SvrScreenLayerPin(device_guest);
+#else
+  const u64 pin = 0;
+#endif
+  if (SameAsLastUpload(s.vsConstants, va, pin))
     return {};
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory) {
@@ -385,6 +432,11 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest) {
     return {};
   }
   CopyByteSwap32FlushNaN(alloc.memory, va, kConstantBlockBytes);
+#if defined(SVR_NATIVE_RENDERER)
+  if (pin)
+    reinterpret_cast<float *>(alloc.memory + kSvrScreenLayerColourByteOffset)[3] *=
+        float(SvrBloomPercent()) / 100.0f;
+#endif
   return alloc;
 }
 
