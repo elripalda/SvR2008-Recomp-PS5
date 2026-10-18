@@ -1,7 +1,9 @@
-// Renders the PS5 hub (src/hub/hub_ui.cpp) to a picture on a PC, with a tiny
-// software rasterizer: previews without the console.
-//   hub_preview <out.rgba> <width> <height> <game dir> <fonts dir> <logo.png> <hero.png> <buttons...>
-// Buttons: a script of presses, e.g. "down down cross" (one per frame).
+// WWE SmackDown vs. Raw 2008 PS5 - renders the hub (ps5/src/hub/hub_ui.cpp) to a picture on
+// a PC, with a tiny software rasterizer: previews without the console.
+//   hub_preview <out.rgb> <width> <height> <app dir> <fonts dir> <logo.png> <hero.jpg> [presses...]
+// Presses: one per frame, e.g. "r1 down down right". HUB_BUTTONS=<dir>: the
+// button pictures (<dir>/Cross.png...). HUB_TIME=<seconds>: how long the hub
+// has been open (the opening animations), default 3.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -17,7 +19,7 @@
 #include "stb_image.h"
 
 #include "imgui.h"
-#include "../../src/hub/hub_ui.h"
+#include "hub_ui.h"
 
 namespace {
 struct Tex {
@@ -90,90 +92,83 @@ Tex* LoadPng(const std::string& path) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 8) return 1;
+  if (argc < 8) {
+    std::fprintf(stderr, "usage: hub_preview <out.rgb> <w> <h> <app dir> <fonts dir> <logo> <hero> [presses...]\n");
+    return 1;
+  }
+  using namespace svr2008::hub;
   g_w = std::atoi(argv[2]);
   g_h = std::atoi(argv[3]);
-  const std::string game = argv[4], fonts = argv[5];
+  const std::string app = argv[4], fonts = argv[5];
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.DisplaySize = ImVec2(float(g_w), float(g_h));
-  const float k = float(g_h) / 1080.0f;
-  svr2008::hub::Assets a;
-  a.display = io.Fonts->AddFontFromFileTTF((fonts + "/oswald-latin-700-normal.ttf").c_str(), 72 * k);
-  a.nav = io.Fonts->AddFontFromFileTTF((fonts + "/oswald-latin-600-normal.ttf").c_str(), 34 * k);
-  a.body = io.Fonts->AddFontFromFileTTF((fonts + "/inter-latin-400-normal.ttf").c_str(), 26 * k);
-  a.body_bold = io.Fonts->AddFontFromFileTTF((fonts + "/inter-latin-600-normal.ttf").c_str(), 26 * k);
+  // (the console's sizes: made for 4K, drawn scaled)
+  ImFontConfig cfg;
+  cfg.OversampleH = 2;
+  Assets a;
+  a.display = io.Fonts->AddFontFromFileTTF((fonts + "/oswald-latin-700-normal.ttf").c_str(), 72.0f * 2, &cfg);
+  a.nav = io.Fonts->AddFontFromFileTTF((fonts + "/oswald-latin-600-normal.ttf").c_str(), 34.0f * 2, &cfg);
+  a.body = io.Fonts->AddFontFromFileTTF((fonts + "/inter-latin-400-normal.ttf").c_str(), 26.0f * 2, &cfg);
+  a.body_bold = io.Fonts->AddFontFromFileTTF((fonts + "/inter-latin-600-normal.ttf").c_str(), 26.0f * 2, &cfg);
   unsigned char* px;
   int fw, fh;
   io.Fonts->GetTexDataAsRGBA32(&px, &fw, &fh);
   Tex font{fw, fh, std::vector<uint8_t>(px, px + size_t(fw) * fh * 4)};
-  io.Fonts->TexID = reinterpret_cast<ImTextureID>(&font);
+  io.Fonts->SetTexID(reinterpret_cast<ImTextureID>(&font));
   if (Tex* t = LoadPng(argv[6])) a.logo = {reinterpret_cast<ImTextureID>(t), float(t->w), float(t->h)};
   if (Tex* t = LoadPng(argv[7])) a.hero = {reinterpret_cast<ImTextureID>(t), float(t->w), float(t->h)};
-
   if (const char* dir = std::getenv("HUB_BUTTONS")) {
-    using namespace svr2008::hub;
-    const std::pair<uint32_t, const char*> names[] = {{kCross, "Cross"},     {kCircle, "Circle"}, {kSquare, "Square"},
+    const std::pair<uint32_t, const char*> names[] = {{kCross, "Cross"},       {kCircle, "Circle"}, {kSquare, "Square"},
                                                       {kTriangle, "Triangle"}, {kL1, "L1"},         {kR1, "R1"},
                                                       {kOptions, "Options"},   {kLeft | kRight, "D-Pad"}, {kR3, "R3"}};
     for (const auto& [b, n] : names)
-      if (Tex* t = LoadPng(std::string(dir) + "/" + n + ".png")) a.buttons[b] = {reinterpret_cast<ImTextureID>(t), float(t->w), float(t->h)};
+      if (Tex* t = LoadPng(std::string(dir) + "/" + n + ".png")) {
+        Image img{reinterpret_cast<ImTextureID>(t), float(t->w), float(t->h)};
+        MeasureFill(img, t->rgba.data(), t->w, t->h);
+        a.buttons[b] = img;
+      }
   }
-  svr2008::hub::Hub hub;
-  svr2008::hub::Paths paths{game, game + "/svr2008.toml", game + "/UserData"};
-  hub.Init(paths, a, "");
-  static int song = 0;
-  svr2008::hub::Audio audio;
-  audio.next_song = [] { return std::string(++song % 2 ? "Rise Up" : "Across the Nation"); };
-  hub.SetAudio(audio);
+  Hub hub;
+  Paths paths{app, app + "/svr2008.toml", app + "/user_data"};
+  hub.Init(paths, a, std::getenv("HUB_VERSION") ? std::getenv("HUB_VERSION") : "");
   hub.SetHasMusic(true);
-  hub.NowPlaying("Across the Nation");
   std::vector<uint32_t> script;
   for (int i = 8; i < argc; ++i) {
-    std::string s = argv[i];
-    using namespace svr2008::hub;
-    uint32_t b = s == "up" ? kUp : s == "down" ? kDown : s == "left" ? kLeft : s == "right" ? kRight
-               : s == "cross" ? kCross : s == "circle" ? kCircle : s == "l1" ? kL1 : s == "r1" ? kR1 : s == "options" ? kOptions : s == "square" ? kSquare : s == "triangle" ? kTriangle : s == "r3" ? kR3 : 0;
+    const std::string s = argv[i];
+    const uint32_t b = s == "up" ? kUp : s == "down" ? kDown : s == "left" ? kLeft : s == "right" ? kRight
+                     : s == "cross" ? kCross : s == "circle" ? kCircle : s == "l1" ? kL1 : s == "r1" ? kR1
+                     : s == "options" ? kOptions : s == "square" ? kSquare : s == "triangle" ? kTriangle
+                     : s == "r3" ? kR3 : 0;
     script.push_back(b);
   }
-  script.push_back(0);
-  // HUB_FRAMES=<dir>: every frame to <dir>/NNNN.rgb (a video of the animations), at HUB_DT seconds a frame
-  const char* frames = std::getenv("HUB_FRAMES");
-  const float step = std::getenv("HUB_DT") ? float(std::atof(std::getenv("HUB_DT"))) : 0.1f;
-  auto raster = [&](const std::string& path) {
-    g_px.assign(size_t(g_w) * g_h * 3, 0);
-    ImDrawData* dd = ImGui::GetDrawData();
-    for (int l = 0; l < dd->CmdListsCount; ++l) {
-      const ImDrawList* list = dd->CmdLists[l];
-      for (const ImDrawCmd& cmd : list->CmdBuffer) {
-        const Tex* tex = reinterpret_cast<const Tex*>(cmd.GetTexID());
-        for (unsigned i = 0; i < cmd.ElemCount; i += 3) {
-          const ImDrawIdx* idx = list->IdxBuffer.Data + cmd.IdxOffset + i;
-          Raster(list->VtxBuffer[cmd.VtxOffset + idx[0]], list->VtxBuffer[cmd.VtxOffset + idx[1]],
-                 list->VtxBuffer[cmd.VtxOffset + idx[2]], tex, cmd.ClipRect);
-        }
-      }
-    }
-    std::vector<uint8_t> out(size_t(g_w) * g_h * 3);
-    for (size_t i = 0; i < out.size(); ++i) out[i] = uint8_t(std::clamp(g_px[i], 0.0f, 1.0f) * 255.0f + 0.5f);
-    std::ofstream(path, std::ios::binary).write(reinterpret_cast<char*>(out.data()), std::streamsize(out.size()));
-  };
-  // HUB_WAIT=<ms>: a pause after each frame (a job on a thread gets that long)
-  const int wait_ms = std::getenv("HUB_WAIT") ? std::atoi(std::getenv("HUB_WAIT")) : 0;
+  // then time passes, so the animations settle
+  const float open = std::getenv("HUB_TIME") ? float(std::atof(std::getenv("HUB_TIME"))) : 3.0f;
+  const float step = 0.05f;
+  for (float t = 0; t < open; t += step) script.push_back(0);
   for (size_t f = 0; f < script.size(); ++f) {
-    if (wait_ms) std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
     io.DeltaTime = step;
     ImGui::NewFrame();
-    svr2008::hub::Pad pad;
+    Pad pad;
     pad.pressed = pad.held = script[f];
     hub.Draw(pad, step);
     ImGui::Render();
-    if (frames) {
-      char name[32];
-      std::snprintf(name, sizeof(name), "/%05zu.rgb", f);
-      raster(frames + std::string(name));
+  }
+  g_px.assign(size_t(g_w) * g_h * 3, 0);
+  ImDrawData* dd = ImGui::GetDrawData();
+  for (int l = 0; l < dd->CmdListsCount; ++l) {
+    const ImDrawList* list = dd->CmdLists[l];
+    for (const ImDrawCmd& cmd : list->CmdBuffer) {
+      const Tex* tex = reinterpret_cast<const Tex*>(cmd.GetTexID());
+      for (unsigned i = 0; i < cmd.ElemCount; i += 3) {
+        const ImDrawIdx* idx = list->IdxBuffer.Data + cmd.IdxOffset + i;
+        Raster(list->VtxBuffer[cmd.VtxOffset + idx[0]], list->VtxBuffer[cmd.VtxOffset + idx[1]],
+               list->VtxBuffer[cmd.VtxOffset + idx[2]], tex, cmd.ClipRect);
+      }
     }
   }
-  raster(argv[1]);
+  std::vector<uint8_t> out(size_t(g_w) * g_h * 3);
+  for (size_t i = 0; i < out.size(); ++i) out[i] = uint8_t(std::clamp(g_px[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+  std::ofstream(argv[1], std::ios::binary).write(reinterpret_cast<char*>(out.data()), std::streamsize(out.size()));
   return 0;
 }

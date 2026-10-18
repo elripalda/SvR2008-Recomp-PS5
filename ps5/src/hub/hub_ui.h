@@ -1,7 +1,7 @@
-// WWE SmackDown vs. Raw 2008 - the PS5 hub: the screen the app opens on,
-// before the game (the PC launcher's settings, driven by the controller).
-// The SmackDown vs. Raw 2011 port's hub, with its Home, Settings, Saves and
-// About pages, and a menu music rotation (R3: the next song).
+// WWE SmackDown vs. Raw 2008 PS5 - the hub: the screen the app opens on, before the game
+// (the PC launcher's settings, driven by the controller). The SmackDown vs. Raw
+// and WWE 2K14 PS5 ports' hub, with its Home, Settings, Saves and About pages,
+// and a menu music rotation (R3: the next song).
 //
 // This part is plain ImGui + the standard library, so it also builds on a
 // PC for previews (tools/hub_preview). ps5_hub.cpp puts it on the PS5's
@@ -45,22 +45,37 @@ struct Pad {
 struct Image {
   ImTextureID id = 0;
   float width = 0, height = 0;
+  // the drawing's share of the picture, across and down (a button picture's
+  // drawing is centred in its square: ps5/tools/hub_buttons.py)
+  float fill_w = 1, fill_h = 1;
   explicit operator bool() const { return id != 0; }
 };
+
+// The part of a picture that isn't clear (alpha above 8), as fill_w / fill_h.
+inline void MeasureFill(Image& img, const unsigned char* rgba, int w, int h) {
+  int x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x)
+      if (rgba[(size_t(y) * w + x) * 4 + 3] > 8) {
+        x0 = x < x0 ? x : x0, x1 = x > x1 ? x : x1;
+        y0 = y < y0 ? y : y0, y1 = y > y1 ? y : y1;
+      }
+  if (x1 >= 0) img.fill_w = float(x1 - x0 + 1) / float(w), img.fill_h = float(y1 - y0 + 1) / float(h);
+}
 
 struct Assets {
   ImFont* display = nullptr;    // Oswald Bold: titles, the big button, numbers
   ImFont* nav = nullptr;        // Oswald SemiBold: the tabs, section names
   ImFont* body = nullptr;       // Inter Regular: text
   ImFont* body_bold = nullptr;  // Inter SemiBold: labels, values
-  Image logo;                   // the SmackDown vs. Raw 2008 logo
+  Image logo;                   // the game's logo
   Image hero;                   // the picture behind it all
   std::map<uint32_t, Image> buttons;  // the PS5's button pictures, by Button (kLeft | kRight: the d-pad)
 };
 
 struct Paths {
   std::filesystem::path app;        // the app folder (/data/homebrew/PPSA92008)
-  std::filesystem::path config;     // svr2008.toml
+  std::filesystem::path config;     // svr2008.toml (the hub's settings)
   std::filesystem::path user_data;  // UserData: the saves are the game's content folders in it
 };
 
@@ -91,6 +106,8 @@ class Hub {
   // The game's files are in Assets (START GAME can go).
   bool Installed() const { return state_.Installed(); }
   void SetHasMusic(bool on) { music_ = on; }
+  // Settings' Menu Music (hub_music_volume, 50% when not set), 0..1.
+  float MusicVolume() const;
 
   struct Setting;
 
@@ -129,16 +146,6 @@ class Hub {
   void DrawSettings();
   void DrawSaves();
   void DrawAbout();
-  void DrawInstall();
-  void DrawInstallProgress();
-  void Empty(const char* title, const std::string& text);
-  // the installer (hub_install_page.cpp): a job on a thread
-  void LoadInstall(bool scan);
-  void StartInstall(const std::filesystem::path& image);
-  void PollTask();
-  void StopTask();
-  void InstallActivate(int what);  // 0 install, 1 delete the file, 2 look again
-  float InstallHints(float right);
   void GoTo(int tab, float dir);
   void PageTitle(const char* title, const std::string& subtitle);
   // A scrolled list with headings at the page's left: rows' items are
@@ -164,7 +171,16 @@ class Hub {
   void Confirm(std::string title, std::string text, std::string yes, std::function<void()> action) {
     confirm_title_ = std::move(title), confirm_text_ = std::move(text), confirm_yes_ = std::move(yes);
     confirm_ = std::move(action);
+    confirm_no_ = nullptr;
+    confirm_no_label_.clear();
     confirm_in_ = 0;
+  }
+  // ...with Circle doing something too (`no_label` in the hints instead of Cancel).
+  void Confirm(std::string title, std::string text, std::string yes, std::function<void()> action, std::string no_label,
+               std::function<void()> no_action) {
+    Confirm(std::move(title), std::move(text), std::move(yes), std::move(action));
+    confirm_no_label_ = std::move(no_label);
+    confirm_no_ = std::move(no_action);
   }
   // A message (Cross closes it).
   void Notice(std::string title, std::string text) { Confirm(std::move(title), std::move(text), "OK", [] {}); }
@@ -188,9 +204,9 @@ class Hub {
   bool toast_song_ = false;  // (the toast is a song's name)
   std::string pending_song_;  // (shown once the hub has faded in)
   bool music_ = false;
-  // a question (restore a backup?): Cross does it, Circle doesn't
-  std::function<void()> confirm_;
-  std::string confirm_title_, confirm_text_, confirm_yes_;
+  // a question (restore a backup?): Cross does it, Circle doesn't (or does confirm_no_)
+  std::function<void()> confirm_, confirm_no_;
+  std::string confirm_title_, confirm_text_, confirm_yes_, confirm_no_label_;
   float confirm_in_ = 0;
   // animation (eased toward their targets)
   float tab_x_ = -1, tab_w_ = 0, focus_y_ = -1, shade_ = 0.3f, page_in_ = 1;
@@ -206,16 +222,9 @@ class Hub {
 
   std::vector<std::pair<std::string, std::string>> config_;  // top-level key = value
   std::vector<SaveItem> save_items_;
-  // install
+  // the game's files
   install::State state_;
-  std::vector<install::DiscImage> images_;
-  struct Task;
-  std::shared_ptr<Task> task_;
-  float task_speed_ = 0, task_in_ = 0;
-  uint64_t task_last_ = 0;
-  std::filesystem::path task_file_;
   std::vector<Backup> backups_;
-
   // helpers (virtual coordinates)
   ImVec2 P(float x, float y) const { return ImVec2(ox_ + x * s_, oy_ + y * s_); }
   float Ease(float& v, float target, float speed = 16);
@@ -224,10 +233,19 @@ class Hub {
   float TextWidth(ImFont* f, float size, const std::string& t, float spacing = 0) const;
   // `t` cut to fit `width` (with "...").
   std::string Fit(ImFont* f, float size, const std::string& t, float width) const;
+  std::vector<std::string> WrapLines(ImFont* f, float size, float width, const std::string& t);
   float Wrapped(ImFont* f, float size, float x, float y, float width, ImU32 col, const std::string& t,
                 float line = 1.4f);
   void Rect(float x, float y, float w, float h, ImU32 col, float r = 0);
-  void Glyph(uint32_t button, float cx, float cy, ImU32 col);  // a PlayStation button
+  // Text with its capitals centred on `cy` (Text's y is the top of its line).
+  void TextMid(ImFont* f, float size, float x, float cy, ImU32 col, const std::string& t, float align = 0,
+               float spacing = 0);
+  float CapMid(ImFont* f, float size) const;    // the capitals' middle, below the line's top
+  float Baseline(ImFont* f, float size) const;  // the baseline, below the line's top
+  // A PlayStation button centred on (cx, cy), its picture's square `size`
+  // across; returns the width of the button drawn in it.
+  float Glyph(uint32_t button, float cx, float cy, ImU32 col, float size);
+  float GlyphWidth(uint32_t button, float size) const;
   float Hint(float right, uint32_t button, const char* label);  // returns its left edge
   void Fade(int first_vertex, float alpha);                    // fades what was drawn since
 };

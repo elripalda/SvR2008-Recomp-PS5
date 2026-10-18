@@ -1,4 +1,4 @@
-// WWE SmackDown vs. Raw 2008 - the PS5 hub on the console (see hub_ui.h):
+// WWE SmackDown vs. Raw 2008 PS5 - the hub on the console (see hub_ui.h):
 // shown before the game is set up (ReXApp::OnFinalizePaths, asynchronous),
 // driven by the DualSense through scePad, with the menu music (hub/music,
 // a random song first, R3 the next one), and START GAME resumes the start.
@@ -138,7 +138,7 @@ class Pad5 {
 // hub/sfx/<name>.*).
 class HubAudio {
  public:
-  explicit HubAudio(const fs::path& hub) {
+  HubAudio(const fs::path& hub, float level) : level_(level) {
     if (!svr2008::sound::StartOutput()) REXLOG_WARN("PS5 hub: no audio port for the hub's sounds");
     music_ = svr2008::sound::NewVoice();
     for (auto& v : sfx_) v = svr2008::sound::NewVoice();
@@ -207,13 +207,19 @@ class HubAudio {
     return {};
   }
 
+  // Settings' Menu Music level (0..1): the song follows it right away.
+  void SetLevel(float level) {
+    if (level == level_) return;
+    level_ = level;
+    if (!leaving_ && switch_in_ <= 0) music_->SetVolume(level_);
+  }
+
   void FadeOut() {
     leaving_ = true;
     music_->FadeOut(0.6f);
   }
 
  private:
-  static constexpr float kMusicVolume = 0.775f;  // (the 2011 hub's level)
   static constexpr float kSwitchFade = 0.35f;
 
   void StartSong() {
@@ -223,12 +229,13 @@ class HubAudio {
       return;  // (Tick moves on)
     }
     failed_ = 0;
-    music_->SetVolume(kMusicVolume);
+    music_->SetVolume(level_);
     music_->Play(std::move(src), songs_.size() == 1);  // (one song: it loops)
     REXLOG_INFO("PS5 hub: playing {}", songs_[song_].filename().string());
   }
 
   svr2008::sound::Voice* music_ = nullptr;
+  float level_ = 0.6f;
   std::array<svr2008::sound::Voice*, 6> sfx_{};
   size_t next_ = 0;
   std::array<fs::path, 8> files_;
@@ -294,9 +301,9 @@ class HubDialog final : public rex::ui::ImGuiDialog {
         {kR1, "R1"},       {kOptions, "Options"}, {kLeft | kRight, "D-Pad"}, {kR3, "R3"}};
     for (const auto& [b, n] : names)
       if (Image img = Load(immediate, hub / "buttons" / (std::string(n) + ".png"))) a.buttons[b] = img;
-    hub_.Init(paths, a, "");
+    hub_.Init(paths, a, SVR2008_PS5_VERSION);
     StyleGameDialogs(a);
-    audio_ = std::make_unique<HubAudio>(hub);
+    audio_ = std::make_unique<HubAudio>(hub, hub_.MusicVolume());
     Audio hooks;
     hooks.sfx = [this](Sound s) { audio_->Sfx(s); };
     hooks.next_song = [this] { return audio_->Next(); };
@@ -309,6 +316,7 @@ class HubDialog final : public rex::ui::ImGuiDialog {
   void OnDraw(ImGuiIO& io) override {
     if (done_) return;
     const Pad pad = pad_.read();
+    audio_->SetLevel(hub_.MusicVolume());
     hub_.NowPlaying(audio_->Tick(io.DeltaTime));
     const bool go = hub_.Draw(pad, io.DeltaTime);
     if (hub_.Leaving() && !faded_) audio_->FadeOut(), faded_ = true;
@@ -326,9 +334,10 @@ class HubDialog final : public rex::ui::ImGuiDialog {
     unsigned char* px = stbi_load(file.string().c_str(), &w, &h, &n, 4);
     if (!px) return {};
     auto tex = immediate->CreateTexture(uint32_t(w), uint32_t(h), rex::ui::ImmediateTextureFilter::kLinear, false, px);
+    Image img{reinterpret_cast<ImTextureID>(tex.get()), float(w), float(h)};
+    MeasureFill(img, px, w, h);
     stbi_image_free(px);
     if (!tex) return {};
-    Image img{reinterpret_cast<ImTextureID>(tex.get()), float(w), float(h)};
     g_textures->push_back(std::move(tex));
     return img;
   }
@@ -358,9 +367,13 @@ void ConfigureFonts(ImFontAtlas* atlas) {
   g_assets.body_bold = AddFont(atlas, svr2008_font_inter_bold, svr2008_font_inter_bold_end, 26.0f * 2);
 }
 
+const Assets& Fonts() { return g_assets; }
+
 ImFont* AddCounterFont(ImFontAtlas* atlas, float size) {
   return AddFont(atlas, svr2008_font_oswald_bold, svr2008_font_oswald_bold_end, size);
 }
+
+const char* Version() { return SVR2008_PS5_VERSION; }
 
 void Show(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, const Paths& paths,
           std::function<void()> launch) {

@@ -1,4 +1,4 @@
-// WWE SmackDown vs. Raw 2008 - the PS5 hub's menu sounds, made here (no
+// WWE SmackDown vs. Raw 2008 PS5 - the PS5 hub's menu sounds, made here (no
 // sound files needed): short, soft clicks and tones (see hub_sfx.h).
 #include "hub_sfx.h"
 
@@ -132,6 +132,31 @@ std::vector<float> SynthSound(Sound sound) {
     }
   }
   return {};
+}
+
+std::vector<float> TrophyChime(bool platinum) {
+  // A bell: each note a struck tone with a quieter, quicker partial above it (2.76x: a bell's, not a string's).
+  auto bell = [](Buffer& b, float at, float f, float amp, float decay) {
+    b.Tone(at, decay * 5, f, f, amp, 0.002f, decay, 0.12f);
+    b.Tone(at, decay * 2.5f, f * 2.76f, f * 2.76f, amp * 0.28f, 0.001f, decay * 0.35f, 0.0f);
+    b.Tone(at, decay * 4, f * 0.5f, f * 0.5f, amp * 0.18f, 0.004f, decay * 0.8f, 0.0f);
+  };
+  if (!platinum) {  // two notes up a fourth, then a soft shimmer
+    Buffer b(1.6f);
+    bell(b, 0.00f, 1174.66f, 0.13f, 0.20f);  // D6
+    bell(b, 0.09f, 1567.98f, 0.15f, 0.32f);  // G6
+    b.Noise(0.09f, 0.7f, 5000, 12000, 0.025f, 0.12f, 0.22f);
+    b.Room();
+    return b.Stereo();
+  }
+  // the platinum: up a major chord, a low warm note under it
+  Buffer b(2.6f);
+  const float notes[] = {1046.50f, 1318.51f, 1567.98f, 2093.00f};  // C6 E6 G6 C7
+  for (int k = 0; k < 4; ++k) bell(b, k * 0.085f, notes[k], 0.11f + 0.015f * k, 0.22f + 0.12f * k);
+  b.Tone(0.0f, 2.2f, 261.63f, 261.63f, 0.07f, 0.03f, 0.6f, 0.3f);  // C4
+  b.Noise(0.25f, 1.4f, 5000, 13000, 0.03f, 0.25f, 0.4f);
+  b.Room();
+  return b.Stereo();
 }
 
 const char* SoundName(Sound sound) {

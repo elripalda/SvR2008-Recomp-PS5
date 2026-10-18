@@ -1,5 +1,5 @@
-// WWE SmackDown vs. Raw 2008 - the PS5 hub's colours and small helpers
-// (hub_ui.cpp, hub_pages.cpp).
+// WWE SmackDown vs. Raw 2008 PS5 - the PS5 hub's colours and small helpers
+// (hub_ui.cpp).
 #pragma once
 
 #include <algorithm>

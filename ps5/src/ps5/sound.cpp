@@ -1,4 +1,4 @@
-// WWE SmackDown vs. Raw 2008 - the port's own sound on the PS5 (sound.h).
+// WWE SmackDown vs. Raw 2008 PS5 - the port's own sound on the PS5 (sound.h).
 #include "sound.h"
 
 #include <algorithm>

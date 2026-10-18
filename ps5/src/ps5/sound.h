@@ -1,4 +1,4 @@
-// WWE SmackDown vs. Raw 2008 - sound of the port's own on the PS5 (the hub's
+// WWE SmackDown vs. Raw 2008 PS5 - sound of the port's own on the PS5 (the hub's
 // music and menu sounds, and in the game the songs of USER PLAYLIST, the
 // jukebox's MY MUSIC and the mods' sounds: music.cpp).
 //

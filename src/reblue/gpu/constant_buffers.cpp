@@ -31,9 +31,9 @@
 
 #if defined(SVR_NATIVE_RENDERER)
 REXCVAR_DECLARE(bool, svr_edge_blur);  // gpu/hooks/draw.cpp
-REXCVAR_DEFINE_INT32(svr_bloom, 50, "SvR",
-                     "Bloom strength, in percent of the game's own (100 = the Xbox 360's, which "
-                     "washes out the arena in the entrance wide shots; 0 = off)");
+REXCVAR_DEFINE_INT32(svr_bloom, 0, "SvR",
+                     "Bloom and light streaks, in percent of the game's own (100 = the Xbox 360's, "
+                     "which the entrances' wide shots turn up until the arena washes out; 0 = off)");
 #endif
 
 #if defined(__x86_64__) || defined(_M_X64)
