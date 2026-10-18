@@ -100,6 +100,45 @@ fi
 # Where the game's files go (the app store's setup, or your disc image's files over FTP)
 mkdir -p "$app/Assets"
 printf 'Put the files from your WWE SmackDown vs. Raw 2008 disc image here (default.xex, pac, sound...),\nor put the .iso itself in the app folder.\n' > "$app/Assets/PUT YOUR GAME FILES HERE.txt"
+cat > "$app/HOW TO INSTALL.txt" <<'TXT'
+WWE SmackDown vs. Raw 2008 for PS5 (PPSA92008)
+Port of nefariousjosiah's WWE-SVR2008-RECOMP by @elripalda
+
+No game files are included. You need your own Xbox 360 copy of the game as a disc image (.iso).
+
+INSTALL
+1. Copy this PPSA92008 folder into /data/homebrew/ on your PS5 (over FTP).
+2. Put your game in it, one of two ways:
+   - copy your .iso into /data/homebrew/PPSA92008/, or
+   - extract the .iso (extract-xiso or similar, leave out $SystemUpdate) and copy the files into
+     /data/homebrew/PPSA92008/Assets/, so you have Assets/default.xex, Assets/pac/ and the rest.
+3. Start SmackDown vs. Raw 2008 from your homebrew launcher and press START GAME.
+
+With Recomp Store (recompstore.com) you don't need any of this: install the game there and give it
+your disc image.
+
+THE HUB
+L1 / R1      change pages
+Cross        select
+Circle       back
+Options      start the game
+R3           next song
+
+Your own menu music (MP3, WAV, FLAC or OGG) goes in /data/homebrew/PPSA92008/hub/music/.
+
+IN THE GAME
+Cross / Circle / Square / Triangle = A / B / X / Y
+L1 / R1 = LB / RB, L2 / R2 = LT / RT, L3 / R3 = stick clicks
+Options = Start, touchpad click = Back
+
+UPDATING
+Copy a newer PPSA92008 folder over this one. Your game (Assets), saves (UserData), backups and
+settings are kept.
+
+PROBLEMS
+Send the newest file from /data/homebrew/PPSA92008/logs/ (and UserData/crashes/ if there is one)
+on the RIPALDA Discord: https://discord.gg/GgDE5Vynyu
+TXT
 # PlayStation button pictures (tools/ps_buttons/build.py writes art/local/ps_buttons/ps_buttons.bin:
 # the drawn buttons, your DualSense picture and where they go) -> <app>/ps_buttons.bin
 if [[ -f $port/art/local/ps_buttons/ps_buttons.bin ]]; then

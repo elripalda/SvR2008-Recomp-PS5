@@ -57,6 +57,17 @@ std::filesystem::path StorePath() {
   return rex::filesystem::GetExecutableFolder() / "pipelines.bin";
 }
 
+// Where pipelines compiled on the render thread are added. On the PS5 an update copies a new app
+// folder over the old one, pipelines.bin included: the ones learned while playing go to UserData,
+// which updates keep, so a scene's first-time compiles happen once.
+std::filesystem::path LearnedPath() {
+#if defined(__PROSPERO__)
+  return rex::filesystem::GetExecutableFolder() / "UserData" / "cache" / "pipelines.bin";
+#else
+  return StorePath();
+#endif
+}
+
 // The stored form: the pipeline with content hashes in its shader and declaration slots, and the
 // device-chosen formats in their neutral form (SanitizePipelineState maps them back on load):
 // depth-stencil D32S8 (D3D12 picks D24S8 on NVIDIA / Intel) and the scene's RGBA16F, so a store
@@ -143,23 +154,28 @@ void EnqueuePipelinePriority(const PipelineState &state) { Enqueue(state, true);
 std::vector<PipelineState> SvrLoadPipelineStore() {
   std::vector<PipelineState> out;
   std::lock_guard lock(g_store_mutex);
-  FILE *f = rex::filesystem::OpenFile(StorePath(), "rb");
-  if (!f)
-    return out;
-  FileHeader header;
-  if (std::fread(&header, sizeof(header), 1, f) == 1 && header.magic == kMagic &&
-      header.version == kVersion && header.record_size == sizeof(PipelineState)) {
-    PipelineState s;
-    while (std::fread(&s, sizeof(s), 1, f) == 1) {
-      if (g_stored.insert(HashPipelineState(s)).second)
-        out.push_back(s);
+  std::vector<std::filesystem::path> files{StorePath()};
+  if (LearnedPath() != StorePath())
+    files.push_back(LearnedPath());
+  for (const auto &path : files) {
+    FILE *f = rex::filesystem::OpenFile(path, "rb");
+    if (!f)
+      continue;
+    FileHeader header;
+    if (std::fread(&header, sizeof(header), 1, f) == 1 && header.magic == kMagic &&
+        header.version == kVersion && header.record_size == sizeof(PipelineState)) {
+      PipelineState s;
+      while (std::fread(&s, sizeof(s), 1, f) == 1) {
+        if (g_stored.insert(HashPipelineState(s)).second)
+          out.push_back(s);
+      }
+      std::fclose(f);
+    } else {
+      std::fclose(f);
+      std::error_code ec;
+      std::filesystem::remove(path, ec);
+      BD_INFO("pso: {} is from another version; starting a new one", path.filename().string());
     }
-    std::fclose(f);
-  } else {
-    std::fclose(f);
-    std::error_code ec;
-    std::filesystem::remove(StorePath(), ec);
-    BD_INFO("pso: pipelines.bin is from another version; starting a new one");
   }
   BD_INFO("pso: {} stored pipelines; each compiles in the background once its shaders load",
           out.size());
@@ -174,12 +190,17 @@ void SvrRecordPipeline(const PipelineState &state, u64 vs, u64 ps, u64 decl) {
   std::lock_guard lock(g_store_mutex);
   if (!g_stored.insert(HashPipelineState(s)).second)
     return;
-  const auto path = StorePath();
+  const auto path = LearnedPath();
   std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
   const bool fresh = !std::filesystem::exists(path, ec) || std::filesystem::file_size(path, ec) == 0;
   FILE *f = rex::filesystem::OpenFile(path, fresh ? "wb" : "ab");
-  if (!f)
+  if (!f) {
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true))
+      BD_WARN("pso: can't add to {}: new pipelines won't be remembered", path.string());
     return;
+  }
   if (fresh) {
     const FileHeader header;
     std::fwrite(&header, sizeof(header), 1, f);

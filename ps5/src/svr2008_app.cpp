@@ -28,6 +28,8 @@
 namespace fs = std::filesystem;
 
 REXCVAR_DEFINE_BOOL(svr_fps_counter, true, "Game", "Show the frame rate in the top-left corner while playing");
+REXCVAR_DEFINE_BOOL(svr_frame_log_buttons, false, "Game",
+                    "L3 + R3 writes every draw of the next frame to the log (for finding rendering bugs)");
 // (the hub's settings, logged when the game starts)
 REXCVAR_DECLARE(int32_t, svr_render_scale);
 REXCVAR_DECLARE(bool, svr_60fps);
@@ -45,8 +47,8 @@ bool SvrPadArtLoad(const std::filesystem::path& file);  // src/native/svr_pad_ar
 
 namespace {
 
-// Test builds: L3 + R3 together writes every draw of the next frame to the log ([drawlog]
-// lines), to see what a scene is made of (the PC port's F9).
+// With svr_frame_log_buttons (svr2008.toml): L3 + R3 together writes every draw of the next frame
+// to the log ([drawlog] lines), to see what a scene is made of (the PC port's F9).
 class PadWatchDialog final : public rex::ui::ImGuiDialog {
  public:
   PadWatchDialog(rex::ui::ImGuiDrawer* drawer, rex::Runtime* runtime) : ImGuiDialog(drawer), runtime_(runtime) {}
@@ -104,7 +106,7 @@ constexpr char kDefaultConfig[] =
     "# (a window, not fullscreen: fullscreen gives the hub and overlays a 4:3 screen on the PS5)\n"
     "fullscreen = false\n"
     "\n"
-    "# test builds: more detail in the log\n"
+    "# more detail in the log, for bug reports\n"
     "[log.levels]\n"
     "fs = \"debug\"\n";
 
@@ -274,12 +276,12 @@ void Svr2008App::OnPreLaunchModule() {
   bd::gpu::SvrPadArtLoad(rex::filesystem::GetExecutableFolder() / "ps_buttons.bin");
   if (drawer_) {
     if (REXCVAR_GET(svr_fps_counter)) fps_counter_ = std::make_unique<FpsCounterDialog>(drawer_);
-    pad_watch_ = std::make_unique<PadWatchDialog>(drawer_, runtime());
+    if (REXCVAR_GET(svr_frame_log_buttons)) pad_watch_ = std::make_unique<PadWatchDialog>(drawer_, runtime());
   }
 }
 
 void Svr2008App::OnPostLoadXexImage() {
-  REXLOG_INFO("==== SmackDown vs. Raw 2008 PS5 port (test build) ====");
+  REXLOG_INFO("==== SmackDown vs. Raw 2008 PS5 port, version {} ====", SVR2008_PS5_VERSION);
   REXLOG_INFO("game: {}", game_data_root().string());
 }
 

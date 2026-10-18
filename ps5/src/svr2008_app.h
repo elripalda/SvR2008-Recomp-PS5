@@ -53,7 +53,7 @@ class Svr2008App : public rex::ReXApp {
   // (Video::PresentOverlayFrame) until START GAME.
   std::thread hub_frames_;
   std::atomic<bool> hub_frames_run_{false};
-  // In the game: the FPS counter, and L3 + R3 logging a frame's draws (test builds).
+  // In the game: the FPS counter, and L3 + R3 logging a frame's draws (svr_frame_log_buttons).
   rex::ui::ImGuiDrawer* drawer_ = nullptr;
   std::unique_ptr<rex::ui::ImGuiDialog> fps_counter_;
   std::unique_ptr<rex::ui::ImGuiDialog> pad_watch_;

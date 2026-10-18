@@ -35,12 +35,14 @@ add_executable(svr2008
     ${SVR_ROOT}/src/input_script.cpp)
 # The hub: the screen the app opens on (THE HUB's Hub Kit, from the DBZ Budokai 3 port); its fonts
 # are built into the app (fonts/, SIL Open Font License).
-set(SVR2008_PS5_VERSION "0.0.10 Test")
+set(SVR2008_PS5_VERSION "1.0")
 target_sources(svr2008 PRIVATE src/hub/hub_ui.cpp src/hub/ps5_hub.cpp src/hub/hub_sfx.cpp src/hub/hub_install.cpp
                                src/ps5/sound.cpp)
 set_source_files_properties(src/hub/ps5_hub.cpp PROPERTIES
     COMPILE_DEFINITIONS "SVR2008_FONTS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fonts\";SVR2008_PS5_VERSION=\"${SVR2008_PS5_VERSION}\""
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fonts/oswald-latin-700-normal.ttf")
+set_source_files_properties(src/svr2008_app.cpp PROPERTIES
+    COMPILE_DEFINITIONS "SVR2008_PS5_VERSION=\"${SVR2008_PS5_VERSION}\"")
 target_include_directories(svr2008 PRIVATE src ${SVR_ROOT}/src)
 rexglue_setup_target(svr2008 GPU_PLUGINS xenos)
 target_compile_definitions(svr2008 PRIVATE SVR_VERSION="${PROJECT_VERSION}")
