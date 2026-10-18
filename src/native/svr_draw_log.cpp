@@ -125,6 +125,24 @@ void SvrDrawLogDraw(u32 device_guest, const char *name, u32 primitive, bool inde
           float(dev->psFloatConstants[13][2]), float(dev->psFloatConstants[13][3]),
           float(dev->psFloatConstants[14][0]), float(dev->psFloatConstants[14][1]),
           float(dev->psFloatConstants[14][2]), float(dev->psFloatConstants[14][3]));
+  // The post-processing passes (downsample, bright pass, blurs, streaks, their combine, and the
+  // composite over the scene): their constants c0-c23 (tap offsets, weights, the bloom threshold,
+  // bloom strength, depth of field, tint).
+  switch (ShaderHash(s.pixel_shader)) {
+  case 0xE3B348A53A83BF62ull: case 0xDC359391C0C127BDull: case 0xC303AFF5B9C4F774ull:
+  case 0x95924853C8758A35ull: case 0x8D3B32AFD0544995ull: case 0xA6EA15C0F2F2B531ull:
+  case 0x07B19DE4D20E66C6ull: {
+    std::string c;
+    for (u32 i = 0; i < 24; ++i)
+      c += fmt::format(" c{}={:.4g},{:.4g},{:.4g},{:.4g}", i, float(dev->psFloatConstants[i][0]),
+                       float(dev->psFloatConstants[i][1]), float(dev->psFloatConstants[i][2]),
+                       float(dev->psFloatConstants[i][3]));
+    BD_INFO("[drawlog]   psc{}", c);
+    break;
+  }
+  default:
+    break;
+  }
   BD_INFO("[drawlog] #{} {} prim {} {} count {} start {} base {} | rt 0x{:08X}[{}] ds 0x{:08X}[{}] "
           "| vp {:.0f},{:.0f} {:.0f}x{:.0f} z {:.2f}-{:.2f} sc {},{}-{},{} | vs {:016X} ps {:016X} "
           "|{}",

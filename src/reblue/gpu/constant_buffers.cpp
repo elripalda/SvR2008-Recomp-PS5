@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <plume_render_interface_builders.h>
+#include <rex/cvar.h>
 #include <rex/graphics/xenos.h>
 #include <rex/runtime.h>
 #include <rex/types.h>
@@ -27,6 +28,10 @@
 #include "gpu/sampler_cache.h"
 #include "gpu/settings.h"
 #include "gpu/shaders/shader_cache.h"
+
+#if defined(SVR_NATIVE_RENDERER)
+REXCVAR_DECLARE(bool, svr_edge_blur);  // gpu/hooks/draw.cpp
+#endif
 
 #if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
@@ -92,7 +97,7 @@ u32 SamplerFieldsKey(const u32 fc[6]) {
 struct StageConstantCache {
   alignas(64) u8 raw[256 * 16];
   bool valid = false;
-  bool pinned = false;
+  u64 pin = 0;  // the pixel shader whose pinned registers this upload carries (0: none)
 };
 
 struct UploadState {
@@ -305,17 +310,17 @@ namespace {
 // (the caller keeps that binding); otherwise remembers it for next time.
 // (The D3D runtime's own dirty masks, m_Mask[0]/[1], can't replace this compare: over a match
 // about 1.3% of draws had new constants with the mask clean.)
-bool SameAsLastUpload(StageConstantCache &cache, u32 guest_va, bool pinned) {
+bool SameAsLastUpload(StageConstantCache &cache, u32 guest_va, u64 pin) {
   const auto *src = bd::mem::at<const u8>(guest_va);
   if (!src) {
     cache.valid = false;
     return false;
   }
-  if (cache.valid && cache.pinned == pinned &&
+  if (cache.valid && cache.pin == pin &&
       std::memcmp(cache.raw, src, kConstantBlockBytes) == 0)
     return true;
   std::memcpy(cache.raw, src, kConstantBlockBytes);
-  cache.pinned = pinned;
+  cache.pin = pin;
   cache.valid = true;
   return false;
 }
@@ -323,6 +328,34 @@ bool SameAsLastUpload(StageConstantCache &cache, u32 guest_va, bool pinned) {
 bool PinsScreenUVScale() {
   auto *ps = bd::gpu::state().pipelineState.pixelShader;
   return ps && ps->shaderCacheEntry && ps->shaderCacheEntry->hash == kBDBlurPSHash;
+}
+
+#if defined(SVR_NATIVE_RENDERER)
+// SvR 2008's post-processing composite (pixel shader 0x07B19DE4D20E66C6), drawn over the scene
+// every 3D frame: a 3x3 Sobel edge test that averages the 9 pixels around every edge, then the
+// depth-of-field blend, the bloom, and the camera's tint/desaturation. Its edge taps are c18.xy
+// apart (one 720p pixel, two or more at the internal resolution): it smeared hair, the crowd and
+// ropes the way SvR's separate edge-blur pass does (gpu/hooks/draw.cpp, svr_edge_blur). With
+// svr_edge_blur off the offsets are zeroed: all 9 taps read the same pixel, no edge is found and
+// the scene passes through sharp, with the rest of the composite as the game sets it.
+constexpr u64 kSvrCompositePSHash = 0x07B19DE4D20E66C6ull;
+constexpr u32 kSvrCompositeEdgeOffsetByteOffset = 18 * 16;
+bool PinsSvrCompositeEdge() {
+  auto *ps = bd::gpu::state().pipelineState.pixelShader;
+  return !REXCVAR_GET(svr_edge_blur) && ps && ps->shaderCacheEntry &&
+         ps->shaderCacheEntry->hash == kSvrCompositePSHash;
+}
+#endif
+
+// The pixel shader whose registers UploadPixelShaderConstants pins, or 0.
+u64 PixelShaderPin() {
+  if (PinsScreenUVScale())
+    return kBDBlurPSHash;
+#if defined(SVR_NATIVE_RENDERER)
+  if (PinsSvrCompositeEdge())
+    return kSvrCompositePSHash;
+#endif
+  return 0;
 }
 }  // namespace
 
@@ -332,7 +365,7 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest) {
   if (!device_guest)
     return {};
   const u32 va = device_guest + offsetof(D3DDevice, vsFloatConstants);
-  if (SameAsLastUpload(s.vsConstants, va, false))
+  if (SameAsLastUpload(s.vsConstants, va, 0))
     return {};
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory) {
@@ -349,7 +382,8 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   if (!device_guest)
     return {};
   const u32 va = device_guest + offsetof(D3DDevice, psFloatConstants);
-  if (SameAsLastUpload(s.psConstants, va, PinsScreenUVScale()))
+  const u64 pin = PixelShaderPin();
+  if (SameAsLastUpload(s.psConstants, va, pin))
     return {};
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory) {
@@ -358,6 +392,13 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   }
   CopyByteSwap32FlushNaN(alloc.memory, va, kConstantBlockBytes);
   PinScreenUVScaleReg(alloc.memory);
+#if defined(SVR_NATIVE_RENDERER)
+  if (pin == kSvrCompositePSHash) {
+    auto *reg = reinterpret_cast<float *>(alloc.memory + kSvrCompositeEdgeOffsetByteOffset);
+    reg[0] = 0.0f;
+    reg[1] = 0.0f;
+  }
+#endif
   return alloc;
 }
 

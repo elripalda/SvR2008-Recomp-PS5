@@ -37,6 +37,10 @@ REXCVAR_DEFINE_INT32(svr_render_scale, 0, "SvR",
                      "Internal resolution: 1 = 720p (original), 2 = 1440p, 3 = 4K (2160p), "
                      "4 = 2880p. 0 = auto: from the display (1440p on 1080p/1440p screens, 4K on "
                      "4K screens), 720p on Steam Deck and on built-in (laptop) graphics");
+REXCVAR_DEFINE_BOOL(svr_post_console_res, true, "SvR",
+                    "Bloom, its light streaks and the depth-of-field blur at the console's "
+                    "resolution (their filters are made for it); off renders them at the internal "
+                    "resolution like everything else (too much bloom from small lights)");
 
 namespace bd::gpu {
 
@@ -146,6 +150,32 @@ u32 SvrRenderScale() {
   return expected;
 }
 
+// The game's post-processing (bloom, its light streaks, the depth-of-field blur) runs on 320x180
+// and 160x90 targets, with filter taps placed for those sizes. Scaled up with the rest, each tap
+// covers a quarter of the area it does on the console: the passes average fewer pixels before the
+// bloom threshold, so small bright things (stage lights, camera flashes in the crowd) cross it
+// that wouldn't on the console, and the blurs leave gaps between their taps. Those targets stay at
+// the console's size; the passes read the full-resolution scene and are drawn over it as before.
+u32 SvrSurfaceScale(u32 width, u32 height) {
+  if (REXCVAR_GET(svr_post_console_res) && width <= 320 && width * 9 == height * 16)
+    return 1;
+  return SvrRenderScale();
+}
+
+u32 SvrBoundTargetScale(u32 device_guest) {
+  const auto *dev = bd::mem::at<const D3DDevice>(device_guest);
+  if (!dev)
+    return SvrRenderScale();
+  u32 va = u32(dev->renderTargetShadow[0]);
+  if (!va)
+    va = u32(dev->depthStencilShadow);
+  const auto *surface = va ? bd::mem::try_at<const D3DSurface>(va) : nullptr;
+  if (!surface)
+    return SvrRenderScale();
+  const u32 bits = surface->SizeBits;
+  return SvrSurfaceScale((bits >> 18) + 1, ((bits >> 3) & 0x7FFF) + 1);
+}
+
 GuestTexture *SvrResolveSurface(u32 surface_va) {
   if (!surface_va)
     return nullptr;
@@ -166,7 +196,7 @@ GuestTexture *SvrResolveSurface(u32 surface_va) {
   }
   const u32 width = (bits >> 18) + 1;
   const u32 height = ((bits >> 3) & 0x7FFF) + 1;
-  const u32 scale = SvrRenderScale();
+  const u32 scale = SvrSurfaceScale(width, height);
   SvrDiagTimer create(SvrDiag::kTargetCreate);
   GuestTexture *host = SvrCreateHostSurface(width * scale, height * scale, format);
   BD_INFO("SvR surface 0x{:08X}: {}x{} format 0x{:08X} -> host {}", surface_va, width, height,
@@ -193,7 +223,7 @@ GuestTexture *SvrResolveTarget(u32 texture_va) {
   const u32 levels = fetch.mip_max_level + 1;
   // ConvertGuestFormat maps a raw GPUTEXTUREFORMAT byte by its low 6 bits; the tag keeps a small
   // byte from matching one of re:Blue's D3DFormat values (k_8_8_8_8 = 6 = its kIndex32).
-  const u32 scale = SvrRenderScale();
+  const u32 scale = SvrSurfaceScale(width, height);
   SvrDiagTimer create(SvrDiag::kTargetCreate);
   GuestTexture *host = SvrCreateHostTexture(width * scale, height * scale, 1, levels, 0,
                                             0xC0000000u | u32(fetch.format), 0);

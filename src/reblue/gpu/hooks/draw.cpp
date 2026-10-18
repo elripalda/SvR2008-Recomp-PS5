@@ -191,8 +191,9 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // the device (floats at +0x3160; SetRenderTarget/SetDepthStencilSurface reset it to the surface).
   if (const auto *dev = bd::mem::at<const bd::gpu::D3DDevice>(device_guest)) {
     const auto &vp = dev->viewport;
-    // Host targets are SvrRenderScale() times the guest's size.
-    const float k = float(bd::gpu::SvrRenderScale());
+    // Host targets are SvrRenderScale() times the guest's size (the post-processing chain's
+    // small targets stay 1x: SvrSurfaceScale).
+    const float k = float(bd::gpu::SvrBoundTargetScale(device_guest));
     bd::gpu::Video::SetDirtyValue<float>(s.dirtyStates.viewport, s.viewport.x, float(vp.X) * k);
     bd::gpu::Video::SetDirtyValue<float>(s.dirtyStates.viewport, s.viewport.y, float(vp.Y) * k);
     bd::gpu::Video::SetDirtyValue<float>(s.dirtyStates.viewport, s.viewport.width,

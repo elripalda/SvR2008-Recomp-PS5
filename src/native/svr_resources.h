@@ -29,6 +29,13 @@ void SvrOnFrame();
 // svr_render_scale (0 = from the window height: 2 at 1440p, 3 at 4K, 1 at 720p/800p). Fixed for
 // the session once the first render target exists.
 u32 SvrRenderScale();
+// The scale a guest surface or resolve texture of this size gets: SvrRenderScale(), except the
+// post-processing chain's small 16:9 targets, which stay at the console's size
+// (svr_post_console_res).
+u32 SvrSurfaceScale(u32 width, u32 height);
+// The scale of the render target (else depth surface) the device has bound: what the draw's
+// viewport and scissor are multiplied by.
+u32 SvrBoundTargetScale(u32 device_guest);
 // What svr_render_scale = 0 (Auto) picks on this PC: 1 on Steam Deck and built-in graphics,
 // otherwise from the screen (2 at 1080p/1440p, 3 at 4K). Shown by the settings menu.
 u32 SvrAutoRenderScale();

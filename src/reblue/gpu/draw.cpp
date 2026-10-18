@@ -249,7 +249,7 @@ void SvrApplyScissor(VideoState &s, u32 device_guest) {
   const u32 br = SvrRegister(device_guest, 0x2082);
   if (tl == 0 && br == 0)
     return;  // never programmed yet
-  const i32 k = i32(SvrRenderScale());  // host targets are this many times the guest's size
+  const i32 k = i32(SvrBoundTargetScale(device_guest));  // host target size / guest size
   const i32 left = i32(tl & 0x7FFFu);
   const i32 top = i32((tl >> 16) & 0x7FFFu);
   const i32 right = std::max(left, i32(br & 0x7FFFu));
