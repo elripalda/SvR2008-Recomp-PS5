@@ -75,3 +75,9 @@ with open(out, 'w') as f:
     f.write(f'const size_t g_spirvCacheDecompressedSize = {len(spirv)};\n')
     f.write(f'const size_t g_shaderCacheEntryCount = {n};\n')
 print(f'wrote {out}')
+# the pipeline list beside it (the PS5 app ships it as pipelines.bin)
+if src.lower().endswith('.zip'):
+    import os
+    pl = os.path.join(os.path.dirname(out), 'pipelines.bin')
+    open(pl, 'wb').write(zipfile.ZipFile(src).read('pipelines.bin'))
+    print(f'wrote {pl}')

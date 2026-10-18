@@ -31,7 +31,7 @@ mkdir -p "$stage/build"
 ln -sfn "$tri/tooling" "$stage/tooling"
 ln -sfn "$tri/vendor" "$stage/vendor"
 
-# The objects and static libraries CMake links into svr2011, in its order.
+# The objects and static libraries CMake links into svr2008, in its order.
 link_cmd=$(ninja -C "$build" -t commands svr2008 | tail -1)
 mapfile -t inputs < <(cd "$build" && for w in $link_cmd; do
     case $w in
@@ -92,6 +92,14 @@ cat > "$app/sce_sys/param.json" <<EOF
   "versionFileUri": ""
 }
 EOF
+# The PC release's pipeline list (render states and shader hashes, no game data): the pipelines
+# are built while each scene loads (generated/native/pipelines.bin, from SVR2008-NATIVE.zip)
+if [[ -f $port/../generated/native/pipelines.bin ]]; then
+    cp "$port/../generated/native/pipelines.bin" "$app/pipelines.bin"
+fi
+# Where the game's files go (the app store's setup, or your disc image's files over FTP)
+mkdir -p "$app/Assets"
+printf 'Put the files from your WWE SmackDown vs. Raw 2008 disc image here (default.xex, pac, sound...),\nor put the .iso itself in the app folder.\n' > "$app/Assets/PUT YOUR GAME FILES HERE.txt"
 # PlayStation button pictures (art/local/pad_icons, made from your game files:
 # never in the repo) -> <app>/pad_icons
 if [[ -d $port/art/local/pad_icons ]]; then

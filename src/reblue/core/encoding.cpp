@@ -63,7 +63,9 @@ std::u16string Utf8ToU16(std::string_view s) {
 
 #else // !defined(_WIN32)
 
+#if !defined(__PROSPERO__)
 #include <iconv.h>
+#endif
 #include <rex/types.h>
 #include <vector>
 
@@ -102,6 +104,12 @@ u32 NextUtf8(std::string_view s, size_t &i) {
 std::string Convert(std::string_view s, const char *to, const char *from) {
   if (s.empty())
     return {};
+#if defined(__PROSPERO__)
+  // [ps5 port] no iconv on the PS5 (Shift-JIS text is Blue Dragon's; SvR's is ASCII)
+  (void)to;
+  (void)from;
+  return std::string(s);
+#else
   iconv_t cd = iconv_open(to, from);
   if (cd == reinterpret_cast<iconv_t>(-1))
     return std::string(s);
@@ -123,6 +131,7 @@ std::string Convert(std::string_view s, const char *to, const char *from) {
   }
   iconv_close(cd);
   return std::string(out.data(), static_cast<size_t>(outbuf - out.data()));
+#endif
 }
 
 } // namespace
