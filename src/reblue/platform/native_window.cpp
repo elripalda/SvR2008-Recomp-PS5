@@ -7,7 +7,9 @@
  */
 #include "platform/native_window.h"
 
+#if !defined(__PROSPERO__)
 #include <SDL3/SDL_video.h>
+#endif
 #if defined(__APPLE__)
 #include <SDL3/SDL_metal.h>
 
@@ -141,6 +143,17 @@ bool GetNativeRenderWindow(rex::ui::Window *window, plume::RenderWindow &out) {
         "SDL window exposed no NSWindow/CAMetalLayer for the Metal surface");
     return false;
   }
+  return true;
+}
+
+#elif defined(__PROSPERO__)
+
+// [ps5 port] plume draws straight to the PS5's display (VK_KHR_display): the window only gives
+// the screen's size.
+bool GetNativeRenderWindow(rex::ui::Window *window, plume::RenderWindow &out) {
+  uint32_t w = window ? window->GetActualPhysicalWidth() : 0;
+  uint32_t h = window ? window->GetActualPhysicalHeight() : 0;
+  out = plume::RenderWindow(window, w ? w : 3840, h ? h : 2160);
   return true;
 }
 

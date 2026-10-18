@@ -19,3 +19,6 @@ logs_regen_out.txt
 /third_party/rexglue-sdk/
 /third_party/plume/
 /third_party/XenosRecomp/
+
+# [ps5 port] plume for the PS5 build (zolaware/plume + patches/plume.patch + ps5/patches/plume-ps5.patch)
+/third_party/plume
