@@ -26,6 +26,7 @@
 #include "engine/engine.h"
 #include "gpu/d3d.h"
 #if defined(SVR_NATIVE_RENDERER)
+#include "svr_display_ramp.h"
 #include "svr_draw_log.h"
 #include "svr_hook.h"
 #include "svr_resources.h"
@@ -97,6 +98,9 @@ u32 D3DDevice_Swap_hook(u32 /*device*/, u32 front_buffer_va,
   auto *front_buffer =
       bd::gpu::HostResourceHeap::FromGuest<bd::gpu::GuestTexture>(
           front_buffer_va);
+#endif
+#if defined(SVR_NATIVE_RENDERER)
+  bd::gpu::SvrUpdateDisplayRamp();
 #endif
   if (bd::engine::SparseFrame())
     bd::gpu::Video::SkipPresent();

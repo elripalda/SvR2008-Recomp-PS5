@@ -3,10 +3,27 @@
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 
+// [SvR] The console's 256-entry display gamma table (256x1, second descriptor), one channel per
+// lookup, between neighbouring entries for filtered (scaled) samples.
+float LookUpDisplayTable(float v, uint channel)
+{
+    float x = saturate(v) * 255.0;
+    int i0 = int(floor(x));
+    int i1 = min(i0 + 1, 255);
+    float a = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex2].Load(int3(i0, 0, 0))[channel];
+    float b = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex2].Load(int3(i1, 0, 0))[channel];
+    return lerp(a, b, x - float(i0));
+}
+
 float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
 {
     float4 sampled = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex]
                        .Sample(g_SamplerDescriptorHeap[0], texCoord);
+    if (g_PushConstants.Param1 < 0.0)
+    {
+        return float4(LookUpDisplayTable(sampled.r, 0), LookUpDisplayTable(sampled.g, 1),
+                      LookUpDisplayTable(sampled.b, 2), 1.0);
+    }
     // max() guards pow() against NaN on negative HDR values (source RT may be R16F).
     float3 ramp = pow(max(sampled.rgb, 0.0), g_PushConstants.Param0);
     // X360 scanout: the system reshapes the app ramp for the display before upload

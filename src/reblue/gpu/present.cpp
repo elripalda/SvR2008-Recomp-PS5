@@ -11,6 +11,7 @@
  */
 #if defined(SVR_NATIVE_RENDERER)
 #include "svr_command_stream.h"
+#include "svr_display_ramp.h"
 #include "svr_frame_diag.h"
 #endif
 #include "gpu/frame.h"
@@ -163,10 +164,15 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt,
                         off_y + static_cast<i32>(fit_h)));
 #if defined(SVR_NATIVE_RENDERER)
   // SvR's front buffer is already display-encoded (Blue Dragon's is linear and relies on the
-  // pow(x, 0.5) scanout ramp its bdBuildGammaRampLUT hook captures; SvR has neither), and the
-  // playable build shows it as written: present it unchanged.
+  // pow(x, 0.5) scanout ramp its bdBuildGammaRampLUT hook captures; SvR has neither). The console
+  // still shows it through the display gamma table the game's D3D programs (svr_display_ramp.h):
+  // when that isn't a straight line, the present pass looks each channel up in it (Param1 < 0,
+  // the table in the second descriptor); otherwise the frame is shown as written.
   constexpr float kPresentGamma = 1.0f;
-  constexpr float kPresentDisplayCorrection = 0.0f;
+  const GuestTexture *display_ramp = SvrDisplayRamp();
+  const bool use_ramp = display_ramp && display_ramp->descriptorIndex != kInvalidDescriptorIndex;
+  const float kPresentDisplayCorrection = use_ramp ? -1.0f : 0.0f;
+  const u32 ramp_desc = use_ramp ? display_ramp->descriptorIndex : 0u;
   s.guest_gamma = 1.0f;
 #else
   constexpr float kPresentGamma = 1.0f;
@@ -178,8 +184,13 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt,
     u32 descriptor_index_2;
     float gamma;
     float display_correction;
-  } pc{gamma_src_desc, 0, s.guest_gamma * kPresentGamma,
-       kPresentDisplayCorrection};
+  } pc{gamma_src_desc,
+#if defined(SVR_NATIVE_RENDERER)
+       ramp_desc,
+#else
+       0,
+#endif
+       s.guest_gamma * kPresentGamma, kPresentDisplayCorrection};
   s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &pc,
                                            kCopyPushConstantByteOffset,
                                            sizeof(pc));

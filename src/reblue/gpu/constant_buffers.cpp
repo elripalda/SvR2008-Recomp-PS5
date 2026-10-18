@@ -31,6 +31,9 @@
 
 #if defined(SVR_NATIVE_RENDERER)
 REXCVAR_DECLARE(bool, svr_edge_blur);  // gpu/hooks/draw.cpp
+REXCVAR_DEFINE_INT32(svr_bloom, 50, "SvR",
+                     "Bloom strength, in percent of the game's own (100 = the Xbox 360's, which "
+                     "washes out the arena in the entrance wide shots; 0 = off)");
 #endif
 
 #if defined(__x86_64__) || defined(_M_X64)
@@ -333,27 +336,36 @@ bool PinsScreenUVScale() {
 #if defined(SVR_NATIVE_RENDERER)
 // SvR 2008's post-processing composite (pixel shader 0x07B19DE4D20E66C6), drawn over the scene
 // every 3D frame: a 3x3 Sobel edge test that averages the 9 pixels around every edge, then the
-// depth-of-field blend, the bloom, and the camera's tint/desaturation. Its edge taps are c18.xy
-// apart (one 720p pixel, two or more at the internal resolution): it smeared hair, the crowd and
-// ropes the way SvR's separate edge-blur pass does (gpu/hooks/draw.cpp, svr_edge_blur). With
-// svr_edge_blur off the offsets are zeroed: all 9 taps read the same pixel, no edge is found and
-// the scene passes through sharp, with the rest of the composite as the game sets it.
+// depth-of-field blend, the bloom, and the camera's tint/desaturation.
+//  - Its edge taps are c18.xy apart (one 720p pixel, two or more at the internal resolution): it
+//    smeared hair, the crowd and ropes the way SvR's separate edge-blur pass does
+//    (gpu/hooks/draw.cpp, svr_edge_blur). With svr_edge_blur off the offsets are zeroed: all 9
+//    taps read the same pixel, no edge is found and the scene passes through sharp.
+//  - The bloom is added as bloom.rgb * c10.x + streaks.rgb * c11.x (0.7 and 0.1 in the arena,
+//    over a bright pass that keeps what's above 0.74): svr_bloom scales both.
 constexpr u64 kSvrCompositePSHash = 0x07B19DE4D20E66C6ull;
+constexpr u32 kSvrCompositeBloomByteOffset = 10 * 16;
+constexpr u32 kSvrCompositeStreaksByteOffset = 11 * 16;
 constexpr u32 kSvrCompositeEdgeOffsetByteOffset = 18 * 16;
-bool PinsSvrCompositeEdge() {
+bool IsSvrComposite() {
   auto *ps = bd::gpu::state().pipelineState.pixelShader;
-  return !REXCVAR_GET(svr_edge_blur) && ps && ps->shaderCacheEntry &&
-         ps->shaderCacheEntry->hash == kSvrCompositePSHash;
+  return ps && ps->shaderCacheEntry && ps->shaderCacheEntry->hash == kSvrCompositePSHash;
 }
+i32 SvrBloomPercent() { return std::clamp(REXCVAR_GET(svr_bloom), 0, 200); }
 #endif
 
-// The pixel shader whose registers UploadPixelShaderConstants pins, or 0.
+// The pixel shader whose registers UploadPixelShaderConstants pins (with what it pins them to),
+// or 0.
 u64 PixelShaderPin() {
   if (PinsScreenUVScale())
     return kBDBlurPSHash;
 #if defined(SVR_NATIVE_RENDERER)
-  if (PinsSvrCompositeEdge())
-    return kSvrCompositePSHash;
+  if (IsSvrComposite()) {
+    const bool edge = REXCVAR_GET(svr_edge_blur);
+    const i32 bloom = SvrBloomPercent();
+    if (!edge || bloom != 100)
+      return kSvrCompositePSHash ^ (u64(edge) << 8) ^ u64(bloom);
+  }
 #endif
   return 0;
 }
@@ -393,10 +405,15 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   CopyByteSwap32FlushNaN(alloc.memory, va, kConstantBlockBytes);
   PinScreenUVScaleReg(alloc.memory);
 #if defined(SVR_NATIVE_RENDERER)
-  if (pin == kSvrCompositePSHash) {
-    auto *reg = reinterpret_cast<float *>(alloc.memory + kSvrCompositeEdgeOffsetByteOffset);
-    reg[0] = 0.0f;
-    reg[1] = 0.0f;
+  if (pin && pin != kBDBlurPSHash) {  // the composite
+    if (!REXCVAR_GET(svr_edge_blur)) {
+      auto *reg = reinterpret_cast<float *>(alloc.memory + kSvrCompositeEdgeOffsetByteOffset);
+      reg[0] = 0.0f;
+      reg[1] = 0.0f;
+    }
+    const float k = float(SvrBloomPercent()) / 100.0f;
+    reinterpret_cast<float *>(alloc.memory + kSvrCompositeBloomByteOffset)[0] *= k;
+    reinterpret_cast<float *>(alloc.memory + kSvrCompositeStreaksByteOffset)[0] *= k;
   }
 #endif
   return alloc;

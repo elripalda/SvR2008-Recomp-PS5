@@ -125,6 +125,14 @@ static const std::vector<Hub::Setting>& Settings() {
       {"DISPLAY", "svr_fps_counter", "FPS Counter", nullptr,
        "Shows the frame rate in the top-left corner while you play.", false, {"true", "false"}, {"On", "Off"},
        "true"},
+      {"DISPLAY", "svr_display_ramp", "Console Gamma", nullptr,
+       "Shows the picture through the Xbox 360's own display gamma, the way the console sends it to a TV. Off "
+       "shows the frame as the game drew it.",
+       false, {"true", "false"}, {"On", "Off"}, "true"},
+      {"DISPLAY", "svr_bloom", "Bloom", nullptr,
+       "How much bright lights glow. Original is the Xbox 360's full bloom, which washes out the arena in the "
+       "entrance wide shots. Soft is half of it.",
+       false, {"100", "50", "0"}, {"Original", "Soft", "Off"}, "50"},
       {"DISPLAY", "svr_edge_blur", "Original Edge Blur", nullptr,
        "The console's own anti-aliasing filter, which softens hair, ropes and the crowd. Off keeps the picture "
        "sharp; the higher resolution smooths edges instead.",
