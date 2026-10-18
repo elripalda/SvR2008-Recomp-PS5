@@ -28,9 +28,9 @@ namespace {
 fs::path g_config_path;
 
 // The settings a first start writes (svr2008.toml beside the app; edit it over FTP).
-constexpr char kConfigVersion[] = "(settings v1)";
+constexpr char kConfigVersion[] = "(settings v2)";
 constexpr char kDefaultConfig[] =
-    "# WWE SmackDown vs. Raw 2008 - settings (settings v1)\n"
+    "# WWE SmackDown vs. Raw 2008 - settings (settings v2)\n"
     "# the game's own 60 fps mode\n"
     "svr_60fps = true\n"
     "# 0 = auto, 1 = the Xbox 360's 720p, 2 = 1440p, 3 = 4K\n"
@@ -41,10 +41,11 @@ constexpr char kDefaultConfig[] =
     "# (the PC port's timing fixes in the runtime)\n"
     "gpu_wait_poll_us = 2000\n"
     "xmp_throttle_hammering_only = true\n"
+    "# (a window, not fullscreen: fullscreen gives the hub and overlays a 4:3 screen on the PS5)\n"
+    "fullscreen = false\n"
     "\n"
     "# test builds: more detail in the log\n"
     "[log.levels]\n"
-    "gpu = \"debug\"\n"
     "fs = \"debug\"\n";
 
 // The game's files: <app>/Assets (the app store's setup, or your disc image's files copied
@@ -106,8 +107,11 @@ void Svr2008App::OnConfigurePaths(rex::PathConfig& paths) {
   g_config_path = paths.config_path;
 }
 
+// The renderer's device in two steps: the device and the swap chain (enough for the hub), and
+// once the runtime exists its heap and back buffer (Video::CreateHostDevice does whichever is
+// left; until the second, the renderer isn't ready and draws nothing).
 bool Svr2008App::EnsureHostDevice() {
-  if (device_created_) return true;
+  if (device_created_) return bd::gpu::Video::CreateHostDevice(window());
   if (!bd::gpu::Video::CreateHostDevice(window())) {
     REXLOG_ERROR("Native renderer: host device creation failed");
     return false;
