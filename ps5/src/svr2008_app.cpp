@@ -16,14 +16,64 @@
 #include <rex/system/gpu_plugin.h>
 #include <rex/ui/imgui_drawer.h>
 
+#include <rex/input/input_system.h>
+#include <rex/ui/imgui_dialog.h>
+
 #include "crash_report.h"
+#include "fps_counter.h"
 #include "gpu/device.h"
 #include "gpu/imgui_overlay_drawer.h"
 #include "hub/ps5_hub.h"
 
 namespace fs = std::filesystem;
 
+REXCVAR_DEFINE_BOOL(svr_fps_counter, true, "Game", "Show the frame rate in the top-left corner while playing");
+
+namespace bd::gpu {
+void SvrDrawLogNextFrame();  // src/native/svr_draw_log.h
+}
+
 namespace {
+
+// Test builds: L3 + R3 together writes every draw of the next frame to the log ([drawlog]
+// lines), to see what a scene is made of (the PC port's F9).
+class PadWatchDialog final : public rex::ui::ImGuiDialog {
+ public:
+  PadWatchDialog(rex::ui::ImGuiDrawer* drawer, rex::Runtime* runtime) : ImGuiDialog(drawer), runtime_(runtime) {}
+
+ protected:
+  void OnDraw(ImGuiIO& io) override {
+    auto* input = runtime_ ? static_cast<rex::input::InputSystem*>(runtime_->input_system()) : nullptr;
+    uint16_t buttons = 0;
+    if (input) {
+      rex::input::X_INPUT_STATE st{};
+      if (input->GetState(0, &st) == 0) buttons = uint16_t(st.gamepad.buttons);
+    }
+    constexpr uint16_t kL3R3 = 0x0040 | 0x0080;  // XINPUT_GAMEPAD_LEFT_THUMB | RIGHT_THUMB
+    const bool both = (buttons & kL3R3) == kL3R3;
+    if (both && !held_) {
+      bd::gpu::SvrDrawLogNextFrame();
+      shown_ = 2.0f;
+      REXLOG_INFO("[drawlog] L3 + R3: logging the next frame");
+    }
+    held_ = both;
+    if (shown_ > 0) {
+      shown_ -= io.DeltaTime;
+      ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 40), ImGuiCond_Always,
+                              ImVec2(0.5f, 1.0f));
+      constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+      if (ImGui::Begin("##svr_drawlog", nullptr, kFlags)) ImGui::TextUnformatted("Frame captured to the log");
+      ImGui::End();
+    }
+  }
+
+ private:
+  rex::Runtime* runtime_;
+  bool held_ = false;
+  float shown_ = 0;
+};
 
 fs::path g_config_path;
 
@@ -191,10 +241,22 @@ std::optional<rex::PathConfig> Svr2008App::OnFinalizePaths(const rex::PathConfig
   return std::nullopt;
 }
 
-void Svr2008App::OnConfigureFonts(ImFontAtlas* atlas) { svr2008::hub::ConfigureFonts(atlas); }
+void Svr2008App::OnConfigureFonts(ImFontAtlas* atlas) {
+  svr2008::hub::ConfigureFonts(atlas);
+  g_fps_counter_font = svr2008::hub::AddCounterFont(atlas, 30.0f);
+}
+
+void Svr2008App::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) { drawer_ = drawer; }
 
 void Svr2008App::OnPreLaunchModule() {
-  if (!EnsureHostDevice()) app_context().QuitFromUIThread();
+  if (!EnsureHostDevice()) {
+    app_context().QuitFromUIThread();
+    return;
+  }
+  if (drawer_) {
+    if (REXCVAR_GET(svr_fps_counter)) fps_counter_ = std::make_unique<FpsCounterDialog>(drawer_);
+    pad_watch_ = std::make_unique<PadWatchDialog>(drawer_, runtime());
+  }
 }
 
 void Svr2008App::OnPostLoadXexImage() {
@@ -205,6 +267,8 @@ void Svr2008App::OnPostLoadXexImage() {
 void Svr2008App::OnWindowPixelSizeChanged(uint32_t, uint32_t) { bd::gpu::Video::RequestResize(); }
 
 void Svr2008App::OnShutdown() {
+  fps_counter_.reset();
+  pad_watch_.reset();
   hub_frames_run_.store(false, std::memory_order_release);
   if (hub_frames_.joinable()) hub_frames_.detach();  // (it ends by itself)
   overlay_drawer_ = nullptr;

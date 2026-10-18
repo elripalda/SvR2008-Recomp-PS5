@@ -358,6 +358,10 @@ void ConfigureFonts(ImFontAtlas* atlas) {
   g_assets.body_bold = AddFont(atlas, svr2008_font_inter_bold, svr2008_font_inter_bold_end, 26.0f * 2);
 }
 
+ImFont* AddCounterFont(ImFontAtlas* atlas, float size) {
+  return AddFont(atlas, svr2008_font_oswald_bold, svr2008_font_oswald_bold_end, size);
+}
+
 void Show(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, const Paths& paths,
           std::function<void()> launch) {
   REXLOG_INFO("PS5 hub: shown (app folder {})", paths.app.string());

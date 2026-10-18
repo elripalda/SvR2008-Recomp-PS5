@@ -122,6 +122,9 @@ static const std::vector<Hub::Setting>& Settings() {
       {"DISPLAY", "bd_anisotropy", "Anisotropic Filter", nullptr,
        "Keeps the ring, the mat and the crowd sharp when seen at an angle.", false, {"0", "2", "4", "8", "16"},
        {"Off", "2x", "4x", "8x", "16x"}, "16"},
+      {"DISPLAY", "svr_fps_counter", "FPS Counter", nullptr,
+       "Shows the frame rate in the top-left corner while you play.", false, {"true", "false"}, {"On", "Off"},
+       "true"},
       {"DISPLAY", "svr_edge_blur", "Original Edge Blur", nullptr,
        "The console's own anti-aliasing filter, which softens hair, ropes and the crowd. Off keeps the picture "
        "sharp; the higher resolution smooths edges instead.",

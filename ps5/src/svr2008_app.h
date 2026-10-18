@@ -15,6 +15,10 @@
 namespace bd::gpu {
 class ImGuiOverlayDrawer;
 }
+namespace rex::ui {
+class ImGuiDialog;
+class ImGuiDrawer;
+}
 
 class Svr2008App : public rex::ReXApp {
  public:
@@ -34,6 +38,7 @@ class Svr2008App : public rex::ReXApp {
   void OnPostLoadXexImage() override;
   void OnWindowPixelSizeChanged(uint32_t, uint32_t) override;
   void OnShutdown() override;
+  void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override;
 
  private:
   bool EnsureHostDevice();
@@ -48,4 +53,8 @@ class Svr2008App : public rex::ReXApp {
   // (Video::PresentOverlayFrame) until START GAME.
   std::thread hub_frames_;
   std::atomic<bool> hub_frames_run_{false};
+  // In the game: the FPS counter, and L3 + R3 logging a frame's draws (test builds).
+  rex::ui::ImGuiDrawer* drawer_ = nullptr;
+  std::unique_ptr<rex::ui::ImGuiDialog> fps_counter_;
+  std::unique_ptr<rex::ui::ImGuiDialog> pad_watch_;
 };
