@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://recompstore.com/game/PPSA92008"><img alt="Get it on RecompStore" src="https://recompstore.com/assets/press/badge-dark.svg" height="56"></a>
+</p>
+
+<p align="center">
   <b>WWE SmackDown vs. Raw 2008</b> running natively on a jailbroken PS5,<br>
   a port of <a href="https://github.com/nefariousjosiah/WWE-SVR2008-RECOMP"><b>nefariousjosiah's WWE-SVR2008-RECOMP</b></a>.
 </p>
@@ -54,7 +58,7 @@ It opens on its own **hub**, where you change settings and manage saves with the
 
 You need a jailbroken PS5 that runs homebrew apps from `/data/homebrew/`, with a homebrew launcher that lists them.
 
-**With [Recomp Store](https://recompstore.com):** install SmackDown vs. Raw 2008 and give it your disc image. It puts the app in `/data/homebrew/PPSA92008/` and the game in its `Assets/` folder. Start the app and press **START GAME**.
+**With [RecompStore](https://recompstore.com):** install SmackDown vs. Raw 2008 and give it your disc image. It puts the app in `/data/homebrew/PPSA92008/` and the game in its `Assets/` folder. Start the app and press **START GAME**.
 
 **By hand** (an FTP client):
 
@@ -84,7 +88,7 @@ Put your own songs (MP3, WAV, FLAC or OGG) in `/data/homebrew/PPSA92008/hub/musi
 
 ## Updating
 
-Copy a newer `PPSA92008` folder over the old one, or update from Recomp Store. The game (`Assets`), your saves (`UserData`), backups and settings are kept.
+Copy a newer `PPSA92008` folder over the old one, or update from RecompStore. The game (`Assets`), your saves (`UserData`), backups and settings are kept.
 
 ## Known issues
 
